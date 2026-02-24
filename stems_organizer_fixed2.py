@@ -1,3 +1,6 @@
+"""
+Stems Organizer PRO — Aplicação Principal
+"""
 import os
 import re
 import shutil
@@ -7,19 +10,18 @@ import json
 import urllib.request
 import subprocess
 import hashlib
-import zipfile
 import winsound
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from functools import wraps
 import time
 import logging
+
 import customtkinter as ctk
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import google.generativeai as genai
 
-# Optional dependencies with graceful fallback
+# Optional dependencies
 try:
     from pydub import AudioSegment
     from pydub.exceptions import CouldntDecodeError
@@ -40,664 +42,24 @@ except ImportError:
 from PIL import Image, ImageDraw, ImageFont
 import io
 
-# --- CONFIGURAÇÃO DE LOGGING ---
+# --- Importar módulos refatorados ---
+from stems_organizer_pro.config import *
+from stems_organizer_pro.utils import retry_on_failure, check_ffmpeg, download_ffmpeg, init_ffmpeg, Tooltip
+from stems_organizer_pro.history import SessionHistory
+from stems_organizer_pro.notifications import ToastNotification
+from stems_organizer_pro.feedback import ExecutionFeedback
+from stems_organizer_pro.updater import AutoUpdater
+
+# --- Setup ---
 logging.basicConfig(
-    level=logging.INFO,  # Reduzido de DEBUG para menos verbose
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
+    handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
 
-# --- DECORATOR PARA RETRY AUTOMÁTICO ---
-def retry_on_failure(max_retries=3, delay=1.0, backoff=2.0):
-    """Decorator para retry automático em caso de falha"""
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            last_exception = None
-            current_delay = delay
-            for attempt in range(max_retries):
-                try:
-                    return func(*args, **kwargs)
-                except Exception as e:
-                    last_exception = e
-                    if attempt < max_retries - 1:
-                        logger.warning(f"Tentativa {attempt + 1} falhou: {e}. Tentando novamente em {current_delay}s...")
-                        time.sleep(current_delay)
-                        current_delay *= backoff
-            logger.error(f"Todas as {max_retries} tentativas falharam: {last_exception}")
-            raise last_exception
-        return wrapper
-    return decorator
+FFMPEG_AVAILABLE = init_ffmpeg()
 
-# --- VERIFICAÇÃO E INSTALAÇÃO DO FFMPEG ---
-def check_ffmpeg():
-    """Verifica se FFmpeg está instalado"""
-    # Adiciona o diretório local ao PATH temporariamente para a sessão caso o instalador tenha colocado lá
-    ffmpeg_dir = os.path.join(os.getenv('APPDATA', ''), 'StemsOrganizerPro', 'ffmpeg')
-    if os.path.exists(ffmpeg_dir):
-        os.environ['PATH'] = ffmpeg_dir + os.pathsep + os.environ.get('PATH', '')
-        
-    try:
-        result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True)
-        return result.returncode == 0
-    except FileNotFoundError:
-        return False
-
-def download_ffmpeg():
-    """Baixa e instala FFmpeg automaticamente no Windows"""
-    if sys.platform != 'win32':
-        return False
-        
-    ffmpeg_dir = os.path.join(os.getenv('APPDATA', ''), 'StemsOrganizerPro', 'ffmpeg')
-    ffmpeg_exe = os.path.join(ffmpeg_dir, 'ffmpeg.exe')
-    
-    if os.path.exists(ffmpeg_exe):
-        # Adicionar ao PATH
-        os.environ['PATH'] = ffmpeg_dir + os.pathsep + os.environ.get('PATH', '')
-        return True
-    
-    try:
-        logger.info("Baixando FFmpeg...")
-        ffmpeg_url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
-        
-        os.makedirs(ffmpeg_dir, exist_ok=True)
-        zip_path = os.path.join(ffmpeg_dir, 'ffmpeg.zip')
-        
-        # Download
-        urllib.request.urlretrieve(ffmpeg_url, zip_path)
-        
-        # Extrair
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(ffmpeg_dir)
-        
-        # Encontrar e mover executáveis
-        for root, dirs, files in os.walk(ffmpeg_dir):
-            for f in files:
-                if f in ['ffmpeg.exe', 'ffprobe.exe']:
-                    src = os.path.join(root, f)
-                    dst = os.path.join(ffmpeg_dir, f)
-                    if src != dst:
-                        shutil.move(src, dst)
-        
-        # Limpar
-        os.remove(zip_path)
-        
-        # Adicionar ao PATH
-        os.environ['PATH'] = ffmpeg_dir + os.pathsep + os.environ.get('PATH', '')
-        logger.info("FFmpeg instalado com sucesso!")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Erro ao instalar FFmpeg: {e}")
-        return False
-
-# Verificar FFmpeg na inicialização
-FFMPEG_AVAILABLE = check_ffmpeg()
-if not FFMPEG_AVAILABLE:
-    logger.info("FFmpeg não encontrado. Tentando instalar automaticamente...")
-    FFMPEG_AVAILABLE = download_ffmpeg()
-
-# --- Classe Helper para Tooltips ---
-class Tooltip:
-    def __init__(self, widget, text):
-        self.widget = widget
-        self.text = text
-        self.tooltip_window = None
-        self.widget.bind("<Enter>", self.show_tooltip)
-        self.widget.bind("<Leave>", self.hide_tooltip)
-        self.widget.bind("<Destroy>", self._on_widget_destroy)
-
-    def _on_widget_destroy(self, event=None):
-        """Limpa tooltip quando widget é destruído"""
-        self.hide_tooltip(None)
-
-    def show_tooltip(self, event):
-        if self.tooltip_window or not self.text:
-            return
-        
-        # Verificar se widget ainda existe
-        try:
-            if not self.widget.winfo_exists():
-                return
-        except (tk.TclError, RuntimeError):
-            return
-            
-        try:
-            x, y, _, _ = self.widget.bbox("insert")
-        except (tk.TclError, TypeError):
-            x, y = 0, 0
-        
-        x = x + self.widget.winfo_rootx() + 25
-        y = y + self.widget.winfo_rooty() + 25
-        
-        self.tooltip_window = ctk.CTkToplevel(self.widget)
-        self.tooltip_window.wm_overrideredirect(True)
-        self.tooltip_window.wm_geometry(f"+{x}+{y}")
-        self.tooltip_window.attributes('-topmost', True)
-        
-        label = ctk.CTkLabel(
-            self.tooltip_window,
-            text=self.text,
-            fg_color="#3c3c3c",
-            corner_radius=5,
-            padx=8,
-            pady=4,
-            font=("", 12)
-        )
-        label.pack()
-
-    def hide_tooltip(self, event):
-        if self.tooltip_window:
-            try:
-                if self.tooltip_window.winfo_exists():
-                    self.tooltip_window.destroy()
-            except (tk.TclError, RuntimeError):
-                pass
-            self.tooltip_window = None
-
-# --- CONFIGURAÇÕES ---
-MIN_PREFIX_OCCURRENCES = 3
-APP_DATA_PATH = os.path.join(os.getenv('APPDATA', os.path.expanduser('~')), 'StemsOrganizerPro')
-os.makedirs(APP_DATA_PATH, exist_ok=True)
-CONFIG_FILE = os.path.join(APP_DATA_PATH, 'api_key.txt')
-RULES_URL = "https://gist.githubusercontent.com/Davidwhs01/ce7dac0b2e6619e5cac9a727269f3cf9/raw/rules.json"
-PROMPT_URL = "https://gist.githubusercontent.com/Davidwhs01/b855b1965feaf5a79802e4ff4af3bad1/raw/master_prompt.txt"
-LOGO_URL = "https://i.imgur.com/SRKbEpf.png"
-
-# --- AUTO UPDATER ---
-CURRENT_VERSION = "1.5.0"
-GITHUB_REPO = "Davidwhs01/Stems-Organizer-PRO"
-
-class AutoUpdater:
-    @staticmethod
-    def parse_version(v):
-        """Parse semver string para tupla comparável"""
-        v = v.strip().lstrip('v')
-        parts = []
-        for p in v.split('.'):
-            try:
-                parts.append(int(p))
-            except ValueError:
-                parts.append(0)
-        while len(parts) < 3:
-            parts.append(0)
-        return tuple(parts[:3])
-
-    @staticmethod
-    def cleanup_old_files():
-        """Remove arquivos .old de atualizações anteriores"""
-        try:
-            app_dir = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, 'frozen', False) else __file__))
-            for f in os.listdir(app_dir):
-                if f.endswith('.old'):
-                    try:
-                        os.remove(os.path.join(app_dir, f))
-                        logger.info(f"Limpeza: removido {f}")
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-
-    @staticmethod
-    def check_for_updates():
-        try:
-            url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-            request = urllib.request.Request(url)
-            request.add_header('User-Agent', f'StemsOrganizerPro/{CURRENT_VERSION}')
-            with urllib.request.urlopen(request, timeout=5) as response:
-                data = json.loads(response.read().decode('utf-8'))
-                latest_version = data.get('tag_name', '').replace('v', '')
-                if latest_version:
-                    latest_tuple = AutoUpdater.parse_version(latest_version)
-                    current_tuple = AutoUpdater.parse_version(CURRENT_VERSION)
-                    if latest_tuple > current_tuple:
-                        return data
-        except Exception as e:
-            logger.error(f"Erro ao checar atualizações: {e}")
-        return None
-
-    @staticmethod
-    def download_and_install_update(release_data, parent_window):
-        assets = release_data.get('assets', [])
-        installer_url = None
-        for asset in assets:
-            if asset['name'].endswith('.exe') and 'setup' in asset['name'].lower():
-                installer_url = asset['browser_download_url']
-                break
-        
-        if not installer_url:
-            ToastNotification(parent_window, "Instalador não encontrado na release.", "error")
-            return
-
-        # Overlay de download no app principal
-        overlay = ctk.CTkFrame(parent_window, fg_color="#000000", corner_radius=0)
-        overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
-        
-        center_frame = ctk.CTkFrame(overlay, fg_color=COLOR_CARD, corner_radius=16, border_width=1, border_color=COLOR_ACCENT_PURPLE)
-        center_frame.place(relx=0.5, rely=0.5, anchor="center")
-        
-        icon_label = ctk.CTkLabel(center_frame, text="🔄", font=("", 40))
-        icon_label.pack(pady=(30, 10))
-        
-        title_label = ctk.CTkLabel(center_frame, text="Baixando Atualização...", font=("", 18, "bold"), text_color=COLOR_TEXT)
-        title_label.pack(pady=(0, 5))
-        
-        version_label = ctk.CTkLabel(center_frame, text=f"v{CURRENT_VERSION}  →  {release_data.get('tag_name', '?')}", font=("", 13), text_color=COLOR_ACCENT_CYAN)
-        version_label.pack(pady=(0, 15))
-        
-        progress = ctk.CTkProgressBar(center_frame, width=350, progress_color=COLOR_ACCENT_PURPLE)
-        progress.pack(padx=40, pady=(0, 5))
-        progress.set(0)
-        
-        pct_label = ctk.CTkLabel(center_frame, text="0%", font=("", 12), text_color=COLOR_TEXT_DIM)
-        pct_label.pack(pady=(0, 20))
-
-        def download_thread():
-            temp_installer = os.path.join(APP_DATA_PATH, "StemsOrganizerPro_Updater.exe")
-            try:
-                def report_progress(block_num, block_size, total_size):
-                    if total_size > 0:
-                        percent = min(1.0, (block_num * block_size) / total_size)
-                        parent_window.after(10, lambda p=percent: progress.set(p))
-                        parent_window.after(10, lambda p=percent: pct_label.configure(text=f"{int(p*100)}%"))
-                        
-                urllib.request.urlretrieve(installer_url, temp_installer, reporthook=report_progress)
-                
-                parent_window.after(10, lambda: title_label.configure(text="Atualização baixada!"))
-                parent_window.after(10, lambda: icon_label.configure(text="✅"))
-                parent_window.after(10, lambda: pct_label.configure(text="Iniciando instalador..."))
-                time.sleep(1)
-                
-                # Estratégia .old: renomear executável atual antes de instalar
-                if getattr(sys, 'frozen', False):
-                    current_exe = sys.executable
-                    old_exe = current_exe + '.old'
-                    try:
-                        if os.path.exists(old_exe):
-                            os.remove(old_exe)
-                        os.rename(current_exe, old_exe)
-                        logger.info(f"Renomeado {current_exe} -> {old_exe}")
-                    except Exception as e:
-                        logger.warning(f"Não foi possível renomear exe: {e}")
-                
-                # Executar instalador e sair
-                subprocess.Popen([temp_installer, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"])
-                os._exit(0)
-            except Exception as e:
-                parent_window.after(0, lambda: overlay.destroy())
-                parent_window.after(100, lambda: ToastNotification(parent_window, f"Falha na atualização: {e}", "error"))
-
-        threading.Thread(target=download_thread, daemon=True).start()
-
-
-# --- CREDENCIAIS DO SUPABASE ---
-# IMPORTANTE: Use variáveis de ambiente para maior segurança
-# Defina SUPABASE_URL e SUPABASE_KEY no seu sistema
-SUPABASE_URL = os.environ.get(
-    'SUPABASE_URL', 
-    "https://mytywjgptinbgpapfpum.supabase.co"
-)
-SUPABASE_KEY = os.environ.get(
-    'SUPABASE_KEY',
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im15dHl3amdwdGluYmdwYXBmcHVtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYwOTkxNzgsImV4cCI6MjA3MTY3NTE3OH0.9bShsivDy88f2wReb8ggnluk8iGnZ1eA5ALMP5lGCRQ"
-)
-
-# --- PALETA DE CORES PREMIUM v1.5 ---
-COLOR_BACKGROUND = "#0d0d0e"
-COLOR_FRAME = "#1a1a2e"
-COLOR_SURFACE = "#16213e"
-COLOR_CARD = "#1e293b"
-COLOR_TEXT = "#e2e8f0"
-COLOR_TEXT_DIM = "#94a3b8"
-COLOR_ACCENT_PURPLE = "#7c3aed"
-COLOR_ACCENT_CYAN = "#06b6d4"
-COLOR_BUTTON_HOVER = "#6d28d9"
-COLOR_LIGHTNING = "#c4b5fd"
-COLOR_SUCCESS = "#10b981"
-COLOR_WARNING = "#f59e0b"
-COLOR_ERROR = "#ef4444"
-COLOR_SIDEBAR = "#111827"
-COLOR_SIDEBAR_ACTIVE = "#1e1b4b"
-COLOR_BORDER = "#334155"
-COLOR_GLASS = "#1e293b"
-
-# --- HISTÓRICO DE SESSÃO ---
-SESSION_HISTORY_FILE = os.path.join(APP_DATA_PATH, 'session_history.json')
-
-class SessionHistory:
-    """Gerencia histórico de sessões de organização"""
-    @staticmethod
-    def load():
-        try:
-            if os.path.exists(SESSION_HISTORY_FILE):
-                with open(SESSION_HISTORY_FILE, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-        except Exception:
-            pass
-        return []
-    
-    @staticmethod
-    def save(sessions):
-        try:
-            with open(SESSION_HISTORY_FILE, 'w', encoding='utf-8') as f:
-                json.dump(sessions[-10:], f, ensure_ascii=False, indent=2)  # Manter últimas 10
-        except Exception:
-            pass
-    
-    @staticmethod
-    def add(folder_path, file_count, categories_found, duration_seconds):
-        sessions = SessionHistory.load()
-        sessions.append({
-            'date': time.strftime('%Y-%m-%d %H:%M'),
-            'folder': folder_path,
-            'files': file_count,
-            'categories': categories_found,
-            'duration': round(duration_seconds, 1)
-        })
-        SessionHistory.save(sessions)
-
-
-class ToastNotification:
-    """Sistema de notificações toast com animação slide-in"""
-    _active_toasts = []
-    
-    def __init__(self, root, message, toast_type="info", duration=4000, action_text=None, action_callback=None):
-        self.root = root
-        self.duration = duration
-        self._destroyed = False
-        
-        # Configurações visuais por tipo
-        configs = {
-            "success": {"icon": "✅", "bg": "#064e3b", "border": COLOR_SUCCESS, "accent": COLOR_SUCCESS},
-            "error":   {"icon": "❌", "bg": "#450a0a", "border": COLOR_ERROR, "accent": COLOR_ERROR},
-            "warning": {"icon": "⚠️", "bg": "#451a03", "border": COLOR_WARNING, "accent": COLOR_WARNING},
-            "update":  {"icon": "🔄", "bg": "#1e1b4b", "border": COLOR_ACCENT_PURPLE, "accent": COLOR_ACCENT_PURPLE},
-            "info":    {"icon": "ℹ️", "bg": "#0c1929", "border": COLOR_ACCENT_CYAN, "accent": COLOR_ACCENT_CYAN}
-        }
-        cfg = configs.get(toast_type, configs["info"])
-        
-        # Calcular posição vertical (empilhar toasts)
-        y_offset = 20
-        for t in ToastNotification._active_toasts:
-            try:
-                if t.toast_frame and t.toast_frame.winfo_exists():
-                    y_offset += 75
-            except:
-                pass
-        
-        # Frame principal do toast
-        self.toast_frame = ctk.CTkFrame(
-            root, fg_color=cfg["bg"], corner_radius=12,
-            border_width=1, border_color=cfg["border"],
-            width=420, height=60
-        )
-        self.toast_frame.place(relx=1.0, y=y_offset, anchor="ne", x=430)  # Começa fora da tela
-        self.toast_frame.pack_propagate(False)
-        
-        content = ctk.CTkFrame(self.toast_frame, fg_color="transparent")
-        content.pack(fill="both", expand=True, padx=12, pady=8)
-        
-        # Ícone
-        icon_label = ctk.CTkLabel(content, text=cfg["icon"], font=("", 18), width=30)
-        icon_label.pack(side="left", padx=(0, 8))
-        
-        # Mensagem
-        msg_label = ctk.CTkLabel(
-            content, text=message, font=("", 13), text_color=COLOR_TEXT,
-            anchor="w", wraplength=250
-        )
-        msg_label.pack(side="left", fill="x", expand=True)
-        
-        # Botão de ação (opcional)
-        if action_text and action_callback:
-            action_btn = ctk.CTkButton(
-                content, text=action_text, font=("", 12, "bold"), width=90, height=28,
-                fg_color=cfg["accent"], hover_color=cfg["border"],
-                command=lambda: [action_callback(), self.dismiss()]
-            )
-            action_btn.pack(side="right", padx=(8, 0))
-        
-        # Botão fechar
-        close_btn = ctk.CTkButton(
-            content, text="✕", width=24, height=24, font=("", 11),
-            fg_color="transparent", hover_color="#374151", text_color=COLOR_TEXT_DIM,
-            command=self.dismiss
-        )
-        close_btn.pack(side="right")
-        
-        ToastNotification._active_toasts.append(self)
-        
-        # Animação slide-in
-        self._slide_in(y_offset)
-    
-    def _slide_in(self, y_offset, current_x=430):
-        if self._destroyed:
-            return
-        if current_x > -10:
-            try:
-                if self.toast_frame.winfo_exists():
-                    self.toast_frame.place(relx=1.0, y=y_offset, anchor="ne", x=current_x)
-                    self.root.after(12, lambda: self._slide_in(y_offset, current_x - 30))
-            except:
-                pass
-        else:
-            try:
-                if self.toast_frame.winfo_exists():
-                    self.toast_frame.place(relx=1.0, y=y_offset, anchor="ne", x=-10)
-            except:
-                pass
-            if self.duration > 0:
-                self.root.after(self.duration, self.dismiss)
-    
-    def dismiss(self):
-        if self._destroyed:
-            return
-        self._destroyed = True
-        try:
-            if self in ToastNotification._active_toasts:
-                ToastNotification._active_toasts.remove(self)
-            if self.toast_frame and self.toast_frame.winfo_exists():
-                self.toast_frame.destroy()
-        except:
-            pass
-
-class ExecutionFeedback:
-    """Classe para gerenciar feedback visual durante execução"""
-    def __init__(self, parent_frame):
-        self.parent_frame = parent_frame
-        self.feedback_frame = None
-        self.current_step = 0
-        self.total_steps = 0
-        self.stat_labels = {}
-        self.stats = {}
-        
-    def start_feedback(self, total_steps):
-        """Inicia o feedback visual"""
-        self.total_steps = total_steps
-        self.current_step = 0
-
-        # Limpar frame pai de forma segura
-        self.clear_parent_frame()
-
-        # Criar frame de feedback
-        self.feedback_frame = ctk.CTkFrame(self.parent_frame, fg_color="transparent")
-        self.feedback_frame.pack(fill="both", expand=True, padx=20, pady=20)
-
-        # Título
-        self.title_label = ctk.CTkLabel(
-            self.feedback_frame,
-            text="🎯 Processando seus arquivos...",
-            font=("", 24, "bold"),
-            text_color=COLOR_ACCENT_CYAN
-        )
-        self.title_label.pack(pady=(40, 20))
-
-        # Container principal
-        main_container = ctk.CTkFrame(self.feedback_frame, fg_color=COLOR_FRAME)
-        main_container.pack(fill="both", expand=True, padx=40, pady=20)
-
-        # Frame de estatísticas em tempo real
-        self.stats_frame = ctk.CTkFrame(main_container, fg_color="transparent")
-        self.stats_frame.pack(fill="x", padx=20, pady=20)
-
-        # Estatísticas lado a lado
-        stats_container = ctk.CTkFrame(self.stats_frame, fg_color="transparent")
-        stats_container.pack()
-        stats_container.grid_columnconfigure((0, 1, 2, 3), weight=1)
-
-        # Cards de estatísticas
-        self.create_stat_card(stats_container, "🎵 Processados", "0", 0)
-        self.create_stat_card(stats_container, "🎤 Classificados", "0", 1)
-        self.create_stat_card(stats_container, "🗑️ Descartados", "0", 2)
-        self.create_stat_card(stats_container, "⏱️ Tempo", "00:00", 3)
-
-        # Frame de atividade atual
-        activity_frame = ctk.CTkFrame(main_container, fg_color=COLOR_BACKGROUND)
-        activity_frame.pack(fill="x", padx=20, pady=10)
-
-        self.activity_label = ctk.CTkLabel(
-            activity_frame,
-            text="Iniciando análise...",
-            font=("", 16),
-            text_color=COLOR_TEXT
-        )
-        self.activity_label.pack(pady=15)
-
-        # Lista de arquivos sendo processados
-        self.file_list_frame = ctk.CTkScrollableFrame(
-            main_container,
-            fg_color=COLOR_BACKGROUND,
-            height=200
-        )
-        self.file_list_frame.pack(fill="both", expand=True, padx=20, pady=(0, 20))
-
-        # Inicializar estatísticas
-        self.stats = {
-            'processed': 0,
-            'classified': 0,
-            'discarded': 0,
-            'start_time': time.time()
-        }
-
-    def clear_parent_frame(self):
-        """Limpa o frame pai de forma segura"""
-        try:
-            if not self.parent_frame.winfo_exists():
-                return
-        except:
-            return
-            
-        for widget in self.parent_frame.winfo_children():
-            try:
-                widget.destroy()
-            except:
-                pass
-
-    def create_stat_card(self, parent, title, value, column):
-        """Cria um card de estatística"""
-        card = ctk.CTkFrame(parent, fg_color=COLOR_BACKGROUND, width=150)
-        card.grid(row=0, column=column, padx=10, pady=10, sticky="ew")
-        card.pack_propagate(False)
-
-        title_label = ctk.CTkLabel(card, text=title, font=("", 12), text_color="#888888")
-        title_label.pack(pady=(10, 5))
-
-        value_label = ctk.CTkLabel(card, text=value, font=("", 18, "bold"), text_color=COLOR_ACCENT_PURPLE)
-        value_label.pack(pady=(0, 10))
-
-        # Armazenar referência para atualização
-        self.stat_labels[title] = value_label
-
-    def update_activity(self, message):
-        """Atualiza a atividade atual de forma thread-safe"""
-        try:
-            if hasattr(self, 'activity_label') and self.activity_label.winfo_exists():
-                self.activity_label.configure(text=f"🎯 {message}")
-        except:
-            pass
-
-    def add_file_entry(self, filename, category, icon):
-        """Adiciona entrada de arquivo processado de forma thread-safe"""
-        try:
-            if not (hasattr(self, 'file_list_frame') and self.file_list_frame.winfo_exists()):
-                return
-        except:
-            return
-        
-        try:
-            entry_frame = ctk.CTkFrame(self.file_list_frame, fg_color=COLOR_FRAME)
-            entry_frame.pack(fill="x", padx=5, pady=2)
-
-            # Icon e categoria
-            icon_label = ctk.CTkLabel(entry_frame, text=icon, width=30)
-            icon_label.pack(side="left", padx=(10, 5))
-
-            category_label = ctk.CTkLabel(
-                entry_frame,
-                text=category,
-                width=100,
-                font=("", 12, "bold"),
-                text_color=COLOR_ACCENT_CYAN
-            )
-            category_label.pack(side="left", padx=5)
-
-            # Nome do arquivo (truncar se muito longo)
-            display_name = filename[:50] + "..." if len(filename) > 50 else filename
-            filename_label = ctk.CTkLabel(
-                entry_frame,
-                text=display_name,
-                anchor="w",
-                font=("", 12)
-            )
-            filename_label.pack(side="left", fill="x", expand=True, padx=10)
-
-            # Auto-scroll para baixo de forma mais robusta
-            def scroll_to_bottom():
-                try:
-                    if hasattr(self.file_list_frame, '_parent_canvas'):
-                        canvas = self.file_list_frame._parent_canvas
-                        if canvas and canvas.winfo_exists():
-                            canvas.yview_moveto(1.0)
-                except:
-                    pass
-            
-            # Agendar scroll com delay
-            if hasattr(self.file_list_frame, '_parent_canvas'):
-                self.file_list_frame._parent_canvas.after(10, scroll_to_bottom)
-        except Exception as e:
-            print(f"DEBUG: Erro ao adicionar entrada de arquivo: {e}")
-
-    def update_stats(self, stat_type, increment=1):
-        """Atualiza estatísticas de forma thread-safe"""
-        if stat_type in self.stats:
-            self.stats[stat_type] += increment
-
-        # Atualizar labels de forma segura
-        try:
-            label_map = {
-                "🎵 Processados": 'processed',
-                "🎤 Classificados": 'classified', 
-                "🗑️ Descartados": 'discarded'
-            }
-            
-            for label_key, stat_key in label_map.items():
-                if label_key in self.stat_labels:
-                    label = self.stat_labels[label_key]
-                    if label.winfo_exists():
-                        label.configure(text=str(self.stats[stat_key]))
-            
-            # Atualizar tempo
-            if "⏱️ Tempo" in self.stat_labels:
-                time_label = self.stat_labels["⏱️ Tempo"]
-                if time_label.winfo_exists():
-                    elapsed = int(time.time() - self.stats['start_time'])
-                    mins, secs = divmod(elapsed, 60)
-                    time_label.configure(text=f"{mins:02d}:{secs:02d}")
-        except Exception as e:
-            print(f"DEBUG: Erro ao atualizar stats: {e}")
 
 class App:
     def __init__(self, root):
@@ -848,7 +210,6 @@ class App:
 
         # Navigation buttons
         nav_items = [
-            ("home",      "🏠  Home",         lambda: self.navigate_to("home")),
             ("organize",  "📂  Organizar",    lambda: self.navigate_to("organize")),
             ("history",   "📊  Histórico",    lambda: self.navigate_to("history")),
             ("settings",  "⚙️  Configurações", lambda: self.open_settings_window()),
@@ -960,8 +321,8 @@ class App:
             command=self.undo_last_action
         )
 
-        # Inicializar na home
-        self.navigate_to("home")
+        # Inicializar no Organizar
+        self.navigate_to("organize")
 
     def navigate_to(self, page):
         """Navega para uma página da sidebar com transição"""
@@ -975,9 +336,7 @@ class App:
                 btn.configure(fg_color="transparent", text_color=COLOR_TEXT)
         
         # Roteamento de páginas
-        if page == "home":
-            self.show_welcome_screen()
-        elif page == "organize":
+        if page == "organize":
             if self.folder_path_full:
                 self.show_folder_preview([f for f in os.listdir(self.folder_path_full) if f.lower().endswith('.wav')][:10])
             else:

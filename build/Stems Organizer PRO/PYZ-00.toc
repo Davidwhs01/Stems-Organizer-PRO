@@ -3343,6 +3343,34 @@
   ('statistics',
    'C:\\Users\\Usuario\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\statistics.py',
    'PYMODULE'),
+  ('stems_organizer_pro',
+   'C:\\Users\\Usuario\\Downloads\\Downloads\\Stems Organizer '
+   'PRO\\stems_organizer_pro\\__init__.py',
+   'PYMODULE'),
+  ('stems_organizer_pro.config',
+   'C:\\Users\\Usuario\\Downloads\\Downloads\\Stems Organizer '
+   'PRO\\stems_organizer_pro\\config.py',
+   'PYMODULE'),
+  ('stems_organizer_pro.feedback',
+   'C:\\Users\\Usuario\\Downloads\\Downloads\\Stems Organizer '
+   'PRO\\stems_organizer_pro\\feedback.py',
+   'PYMODULE'),
+  ('stems_organizer_pro.history',
+   'C:\\Users\\Usuario\\Downloads\\Downloads\\Stems Organizer '
+   'PRO\\stems_organizer_pro\\history.py',
+   'PYMODULE'),
+  ('stems_organizer_pro.notifications',
+   'C:\\Users\\Usuario\\Downloads\\Downloads\\Stems Organizer '
+   'PRO\\stems_organizer_pro\\notifications.py',
+   'PYMODULE'),
+  ('stems_organizer_pro.updater',
+   'C:\\Users\\Usuario\\Downloads\\Downloads\\Stems Organizer '
+   'PRO\\stems_organizer_pro\\updater.py',
+   'PYMODULE'),
+  ('stems_organizer_pro.utils',
+   'C:\\Users\\Usuario\\Downloads\\Downloads\\Stems Organizer '
+   'PRO\\stems_organizer_pro\\utils.py',
+   'PYMODULE'),
   ('string',
    'C:\\Users\\Usuario\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\string\\__init__.py',
    'PYMODULE'),
