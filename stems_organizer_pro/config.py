@@ -5,7 +5,7 @@ Constantes, caminhos, credenciais, paleta de cores.
 import os
 
 # --- VERSÃO E REPOSITÓRIO ---
-CURRENT_VERSION = "1.5.4"
+CURRENT_VERSION = "1.7.2"
 GITHUB_REPO = "Davidwhs01/Stems-Organizer-PRO"
 
 # --- CAMINHOS ---
@@ -26,11 +26,11 @@ MIN_PREFIX_OCCURRENCES = 3
 # --- CREDENCIAIS DO SUPABASE ---
 SUPABASE_URL = os.environ.get(
     'SUPABASE_URL',
-    "https://mytywjgptinbgpapfpum.supabase.co"
+    "https://uebbdfgvqiwypnzobbnv.supabase.co"
 )
 SUPABASE_KEY = os.environ.get(
     'SUPABASE_KEY',
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im15dHl3amdwdGluYmdwYXBmcHVtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYwOTkxNzgsImV4cCI6MjA3MTY3NTE3OH0.9bShsivDy88f2wReb8ggnluk8iGnZ1eA5ALMP5lGCRQ"
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVlYmJkZmd2cWl3eXBuem9iYm52Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5MDQ3ODAsImV4cCI6MjA4NzQ4MDc4MH0.X_2w3Zqch7vKYnuOTcVr8TZGedhV38c-l9oE3QjnS5A"
 )
 
 # --- PALETA DE CORES PREMIUM v1.5 ---

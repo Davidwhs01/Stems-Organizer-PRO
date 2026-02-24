@@ -52,6 +52,7 @@ from stems_organizer_pro.feedback import ExecutionFeedback
 from stems_organizer_pro.updater import AutoUpdater
 from stems_organizer_pro.classifier import AudioClassifier
 from stems_organizer_pro.file_ops import FileOperations
+from stems_organizer_pro.auth import AuthManager
 from stems_organizer_pro import screens
 
 # --- Setup ---
@@ -104,17 +105,31 @@ class App:
         # Limpeza de arquivos .old de atualizações anteriores
         AutoUpdater.cleanup_old_files()
 
-        # Inicializar Supabase
+        # Inicializar Supabase e Auth
         self.init_supabase()
+        self.auth = AuthManager(self.supabase)
         
         self.create_widgets()
+        
+        # Tentar Auto-Login
+        if not self.auth.attempt_auto_login():
+            self.root.after(100, self.show_login_screen)
+        else:
+            # Se logou auto, pega a key do Supabase pra memoria
+            key = self.auth.fetch_user_api_key()
+            if key:
+                self.api_key = key
+                self.classifier.api_key = key
+                self.api_configured = True
+            self.root.after(100, lambda: self.navigate_to('organize'))
+
         self.load_api_key()
         
         # Keyboard shortcuts
         self.root.bind('<Control-o>', lambda e: self.browse_folder())
         self.root.bind('<Control-Return>', lambda e: self.start_organization_thread() if not self.is_processing else None)
         self.root.bind('<Control-z>', lambda e: self.undo_last_action())
-        self.root.bind('<Control-comma>', lambda e: self.open_settings_window())
+        self.root.bind('<Control-comma>', lambda e: self.navigate_to('settings'))
         self.root.bind('<Escape>', lambda e: self.request_cancel() if self.is_processing else None)
         
         # Drag and drop (via tkdnd ou fallback)
@@ -183,7 +198,7 @@ class App:
         try:
             self.supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
             # Teste simples da conexão
-            test_response = self.supabase.table('rule_suggestions').select('id').limit(1).execute()
+            test_response = self.supabase.table('ai_learning_rules').select('id').limit(1).execute()
             logger.info("Supabase connection successful.")
         except Exception as e:
             logger.warning(f"Supabase connection failed - {e}")
@@ -217,7 +232,7 @@ class App:
         nav_items = [
             ("organize",  "📂  Organizar",    lambda: self.navigate_to("organize")),
             ("history",   "📊  Histórico",    lambda: self.navigate_to("history")),
-            ("settings",  "⚙️  Configurações", lambda: self.open_settings_window()),
+            ("settings",  "⚙️  Configurações", lambda: self.navigate_to("settings")),
         ]
 
         for key, label, cmd in nav_items:
@@ -293,6 +308,12 @@ class App:
         )
         self.browse_button.grid(row=0, column=1, padx=(0, 8))
 
+        self.clear_button = ctk.CTkButton(
+            self.controls_frame, text="✖", width=32, height=32,
+            fg_color=COLOR_ERROR, hover_color="#c62828", text_color="white",
+            font=("", 14, "bold"), command=self.clear_folder_selection
+        )
+
         analysis_options = ["Análise Rápida (Padrão)", "Análise Profunda (Lenta)", "Nenhuma Análise (Mais Rápido)"]
         self.analysis_mode_combo = ctk.CTkComboBox(
             self.controls_frame, values=analysis_options, width=180, height=32,
@@ -341,13 +362,25 @@ class App:
                 btn.configure(fg_color="transparent", text_color=COLOR_TEXT)
         
         # Roteamento de páginas
+        self.pages = {
+            "organize": self.show_welcome_screen,
+            "history": lambda: self.session_history.show_history_view(self),
+            "settings": self.show_settings_screen
+        }
+        
+        # Clear current content frame
+        self.clear_frame(self.visual_organizer_frame)
+
+        # Call the appropriate page function
         if page == "organize":
             if self.folder_path_full:
                 self.show_folder_preview([f for f in os.listdir(self.folder_path_full) if f.lower().endswith('.wav')][:10])
             else:
-                self.show_welcome_screen()
-        elif page == "history":
-            self.show_history_screen()
+                self.pages[page]()
+        elif page in self.pages:
+            self.pages[page]()
+        else:
+            logger.warning(f"Página desconhecida: {page}")
 
 
     def _reopen_folder(self, path):
@@ -497,7 +530,7 @@ class App:
             except Exception as e:
                 print(f"DEBUG: Erro ao carregar API key: {e}")
 
-    def save_api_key(self, key, popup):
+    def save_api_key(self, key):
         """Salva chave API com validação melhorada"""
         key = key.strip()
         if not key or len(key) < 20:
@@ -508,7 +541,6 @@ class App:
             with open(CONFIG_FILE, "w", encoding='utf-8') as f:
                 f.write(key)
             messagebox.showinfo("Sucesso", f"Chave de API salva com segurança em:\n{APP_DATA_PATH}")
-            popup.destroy()
             self.api_configured = True
         except Exception as e:
             messagebox.showerror("Erro", f"Não foi possível salvar a chave:\n{e}")
@@ -539,16 +571,25 @@ class App:
         self.folder_path_entry.configure(state="readonly")
         self.folder_path_full = folder_selected
         self.start_button.configure(state="normal")
+        self.set_ui_state("idle")
 
         # Mostrar prévia na tela principal
         self.show_folder_preview(wav_files[:10])
 
-
+    def clear_folder_selection(self):
+        """Limpa a pasta selecionada"""
+        self.folder_path_full = ""
+        self.folder_path_entry.configure(state="normal")
+        self.folder_path_entry.delete(0, ctk.END)
+        self.folder_path_entry.configure(state="readonly")
+        self.start_button.configure(state="disabled")
+        self.set_ui_state("idle")
+        self.navigate_to("organize")
 
     def start_organization_thread(self):
         """Inicia análise com validações melhoradas"""
         if not self.api_configured:
-            self.open_settings_window()
+            self.navigate_to('settings')
             return
 
         if self.is_processing:
@@ -562,51 +603,69 @@ class App:
         self.is_processing = True
         self.cancel_requested = False  # Reset cancel flag
         self.planned_actions = []
-        self.hide_apply_button()
+        self.set_ui_state("processing")
         
         # Inicializar ETA
         self.processing_start_time = time.time()
         self.files_processed = 0
         self.total_files_to_process = FileOperations.count_wav_files(self.folder_path_full)
 
-        # Desabilitar controles e mostrar botão cancelar
-        self.start_button.configure(state="disabled")
-        self.browse_button.configure(state="disabled")
-        self.analysis_mode_combo.configure(state="disabled")
-        self.show_cancel_button()
+
 
         # Inicializar feedback visual
         self.execution_feedback = ExecutionFeedback(self.visual_organizer_frame)
 
         threading.Thread(target=self.run_organization_logic, daemon=True).start()
 
-    def hide_apply_button(self):
-        """Esconde o botão aplicar"""
+    def set_ui_state(self, state):
+        """Gerencia centralizadamente o estado visual dos controles inferiores para evitar sobreposições"""
         try:
-            self.apply_button.grid_remove()
-        except:
-            pass
+            # Limpar todos os itens da grid no controls_frame primeiro
+            for widget in self.controls_frame.winfo_children():
+                widget.grid_remove()
+                
+            if state == "idle":
+                # Estado Inicial / Organizar
+                self.folder_path_entry.grid(row=0, column=0, padx=(0, 8))
+                self.browse_button.grid(row=0, column=1, padx=(0, 8))
+                
+                if hasattr(self, 'folder_path_full') and self.folder_path_full:
+                    self.clear_button.grid(row=0, column=2, padx=(0, 8))
+                    self.analysis_mode_combo.grid(row=0, column=3, padx=(0, 8))
+                    self.start_button.grid(row=0, column=4, padx=(0, 5))
+                else:
+                    self.analysis_mode_combo.grid(row=0, column=2, padx=(0, 8))
+                    self.start_button.grid(row=0, column=3, padx=(0, 5))
+                
+                self.folder_path_entry.configure(state="normal" if not self.folder_path_full else "readonly")
+                self.start_button.configure(state="normal" if self.folder_path_full else "disabled")
+                self.browse_button.configure(state="normal")
+                self.analysis_mode_combo.configure(state="normal")
+                
+            elif state == "processing":
+                # Durante processamento
+                self.cancel_button.grid(row=0, column=0, padx=(10, 0))
+                
+            elif state == "review" or state == "report":
+                # Tela de revisão ou relatório final onde precisam "Aplicar"
+                self.apply_button.grid(row=0, column=0, padx=(0, 8))
+                self.undo_button.grid(row=0, column=1, padx=(0, 8))
+                self.start_button.grid(row=0, column=2, padx=(0, 5))
+                
+                self.start_button.configure(state="normal")
+                self.apply_button.configure(state="normal")
+                self.undo_button.configure(state="normal")
+                
+        except Exception as e:
+            logger.error(f"Erro ao mudar estado da UI: {e}")
+
+    def hide_apply_button(self):
+        """Compatibilidade legado"""
+        pass
 
     def show_apply_button(self):
-        """Mostra o botão aplicar"""
-        try:
-            self.apply_button.grid(row=0, column=2, padx=(0, 0))
-        except:
-            pass
-
-    def show_cancel_button(self):
-        """Mostra o botão cancelar"""
-        try:
-            self.cancel_button.grid(row=0, column=3, padx=(10, 0))
-        except:
-            pass
-
-    def hide_cancel_button(self):
-        """Esconde o botão cancelar"""
-        try:
-            self.cancel_button.grid_remove()
-        except:
-            pass
+        """Compatibilidade legado"""
+        pass
 
     def request_cancel(self):
         """Solicita cancelamento do processamento"""
@@ -614,21 +673,7 @@ class App:
             self.cancel_requested = True
             self.update_status("⏹️ Cancelando... Aguarde a conclusão da operação atual.", 0)
             logger.info("Cancelamento solicitado pelo usuário")
-
-    def show_undo_button(self):
-        """Mostra o botão desfazer"""
-        try:
-            self.undo_button.grid(row=0, column=4, padx=(10, 0))
-        except:
-            pass
-
-    def hide_undo_button(self):
-        """Esconde o botão desfazer"""
-        try:
-            self.undo_button.grid_remove()
-        except:
-            pass
-
+            
     def undo_last_action(self):
         """Desfaz a última organização aplicada"""
         if not self.undo_history:
@@ -695,7 +740,7 @@ class App:
         try:
             client = genai.Client(api_key=key)
             response = client.models.generate_content(
-                model="gemini-2.0-flash-lite",
+                model="gemini-flash-latest",
                 contents="Teste de conexão. Responda apenas 'OK'.",
                 config=types.GenerateContentConfig(max_output_tokens=10)
             )
@@ -834,7 +879,9 @@ class App:
             # Os candidatos restantes são apenas os que não são silenciosos
             candidatos_para_ia = candidatos_para_analise
 
-            # Etapa 6: Classificação com IA
+            # Etapa 6: Classificação com IA e Human-in-the-Loop
+            ai_results_collected = {}
+
             if candidatos_para_ia and self.api_configured:
                 total_ia = len(candidatos_para_ia)
                 self.execution_feedback.update_activity(f"Consultando IA para {total_ia} arquivos...")
@@ -857,54 +904,90 @@ class App:
                             self.update_status(f"Processando IA [{processed_count}/{total_ia}]: {nome}", final_progress)
 
                             caminho_original = candidatos_para_ia.get(nome)
-                            if categoria != "Outros" and caminho_original:
-                                FileOperations.move_file(caminho_original, nome, categoria, pasta_raiz, self.classifier.PARENT_FOLDER_MAP)
-                                self.execution_feedback.add_file_entry(nome, categoria, "🧠")
-                                self.execution_feedback.update_stats('classified')
-                                self.submit_suggestion_to_supabase(nome, categoria)
-                            else:
-                                if caminho_original:
-                                    FileOperations.rename_file(caminho_original, nome)
-                                    self.execution_feedback.add_file_entry(nome, "Não Classificados", "❓")
+                            if caminho_original:
+                                ai_results_collected[nome] = {
+                                    'categoria': categoria,
+                                    'caminho': caminho_original
+                                }
 
                     # Pausa entre lotes
                     time.sleep(0.5)
 
-            # Finalizar
-            self.execution_feedback.update_activity("Análise concluída! Preparando relatório...")
-            self.update_status("Análise concluída! Clique em 'Aplicar' para confirmar.", 1.0)
-
-            # Aguardar um pouco para mostrar o status final
+            # Ao inves de ir para o relatorio final direto, mostramos a tela de Revisão
+            self.execution_feedback.update_activity("Análise concluída! Abrindo painel de revisão...")
+            self.update_status("Análise concluída! Por favor, revise as classificações.", 1.0)
             time.sleep(1)
-
-            # Mostrar relatório final
-            self.root.after(0, self.show_final_report)
-            self.root.after(100, lambda: self.play_lightning_effect(self.start_button))
+            
+            # Se a IA não sugeriu nada, ir direto pro relatório
+            if not ai_results_collected:
+                self.set_ui_state("report")
+                self.root.after(0, self.show_final_report)
+            else:
+                self.set_ui_state("review")
+                self.root.after(0, lambda: self.show_review_screen(ai_results_collected))
 
         except Exception as e:
-            error_msg = f"Erro durante análise: {str(e)}"
-            self.update_status(error_msg, 0)
-            self.root.after(0, lambda: messagebox.showerror("Erro", error_msg))
-            print(f"DEBUG: {error_msg}")
+            error_msg = f"Aviso de IA: {str(e)}"
+            self.update_status("Classificação IA falhou ou limite atingido. Agrupando desconhecidos...", 0.9)
+            
+            # FALLBACK DE IA: Adicionar os não classificados como 'Outros' para revisão manual
+            if 'candidatos_para_ia' in locals() and candidatos_para_ia:
+                for nome, caminho in candidatos_para_ia.items():
+                    if nome not in ai_results_collected:
+                       # Só adicionamos os que falharam na IA
+                       ai_results_collected[nome] = {
+                           'categoria': "Outros",
+                           'caminho': caminho
+                       }
+            
+            # Forçar tela de revisão com os 'Outros' para não inutilizar a ferramenta
+            if ai_results_collected:
+                # Mostrar o Toast em vez de error popup travando tudo
+                self.root.after(0, lambda: ToastNotification(self.root, "Cota da IA atingida/Erro. Arquivos foram marcados como 'Outros' para revisão manual.", "warning"))
+                self.set_ui_state("review")
+                self.root.after(2000, lambda: self.show_review_screen(ai_results_collected))
+            else:
+                self.set_ui_state("report")
+                self.root.after(0, self.show_final_report)
 
         finally:
             self.is_processing = False
-            self.root.after(0, self.hide_cancel_button)
-            self.root.after(0, self.enable_controls)
+            # self.enable_controls() # Movido para set_ui_state
 
-
-
-    def enable_controls(self):
-        """Habilita os controles da UI e mostra o botão 'Aplicar' se necessário"""
-        try:
-            self.start_button.configure(state="normal")
-            self.browse_button.configure(state="normal")
-            self.analysis_mode_combo.configure(state="normal")
+    def processar_resultados_revisados(self, final_results):
+        """Chamado pelo botão da tela de revisão após o usuário validar as categorias"""
+        pasta_raiz = self.folder_path_full
+        
+        for nome, result in final_results.items():
+            categoria = result['categoria']
+            caminho_original = result['caminho']
+            foi_alterado = result['foi_alterado']
             
-            if self.planned_actions:
-                self.show_apply_button()
-        except:
-            pass
+            # Ensinar a IA se o usuário alterou ativamente a sugestão
+            if foi_alterado and categoria != "Outros" and categoria != "[Descartar]":
+                self.submit_suggestion_to_supabase(nome, categoria)
+                
+            # Adicionar a lista de ações que serao aplicadas
+            if categoria == "[Descartar]":
+                self.planned_actions.append(FileOperations.create_action('delete', caminho_original))
+            elif categoria != "Outros":
+                pasta_pai = self.classifier.PARENT_FOLDER_MAP.get(categoria, "Outros")
+                categoria_path = os.path.join(pasta_raiz, pasta_pai, categoria)
+                destino = os.path.join(categoria_path, nome)
+                action = FileOperations.create_action('move', caminho_original, destino=destino, category=categoria, source_name=nome, target_name=nome)
+                self.planned_actions.append(action)
+            else:
+                action = FileOperations.create_action('rename', caminho_original, target_name=nome)
+                self.planned_actions.append(action)
+                
+        # Mostra o relatório final confirmando tudo
+        self.show_final_report()
+
+
+
+        # Remove enable_controls and map it to set_ui_state
+    def enable_controls(self):
+        self.set_ui_state("idle")
 
 
     def start_apply_thread(self):
@@ -929,8 +1012,7 @@ class App:
             return
 
         self.is_processing = True
-        self.apply_button.configure(state="disabled")
-        self.start_button.configure(state="disabled")
+        self.set_ui_state("processing")
 
         threading.Thread(target=self.apply_planned_actions, daemon=True).start()
 
@@ -1101,7 +1183,7 @@ class App:
             for keyword in keywords:
                 if len(keyword) >= 3:  # Palavras com pelo menos 3 caracteres
                     # Verificar se já existe
-                    existing = self.supabase.table('rule_suggestions')\
+                    existing = self.supabase.table('ai_learning_rules')\
                         .select('id')\
                         .eq('keyword', keyword)\
                         .eq('category', category)\
@@ -1109,10 +1191,11 @@ class App:
                     
                     if not existing.data:
                         # Submeter nova sugestão
-                        self.supabase.table('rule_suggestions').insert({
+                        self.supabase.table('ai_learning_rules').insert({
                             'keyword': keyword,
                             'category': category,
-                            'confidence': 0.8,
+                            'user_id': self.auth.user.id if self.auth and self.auth.user else None,
+                            'global_confidence': 1.0,
                             'is_approved': False
                         }).execute()
 
@@ -1121,10 +1204,16 @@ class App:
 
 # Função principal
 
+    def show_login_screen(self): screens.show_login_screen(self)
+    def show_review_screen(self, candidates): screens.show_review_screen(self, candidates)
+    def handle_login(self, email, password): screens.handle_login(self, email, password)
+    def handle_register(self, email, password): screens.handle_register(self, email, password)
+    def handle_logout(self): screens.handle_logout(self)
+    
     def show_welcome_screen(self): screens.show_welcome_screen(self)
     def show_history_screen(self): screens.show_history_screen(self)
     def show_folder_preview(self, sample_files): screens.show_folder_preview(self, sample_files)
-    def open_settings_window(self): screens.open_settings_window(self)
+    def show_settings_screen(self): screens.show_settings_screen(self)
     def show_final_report(self): screens.show_final_report(self)
     def show_completion_screen(self, s, e, err): screens.show_completion_screen(self, s, e, err)
 

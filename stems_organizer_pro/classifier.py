@@ -60,7 +60,7 @@ class AudioClassifier:
         # Carregar do Supabase se existir
         if self.supabase:
             try:
-                resp = self.supabase.table('rule_suggestions').select('keyword', 'category').eq('is_approved', True).execute()
+                resp = self.supabase.table('ai_learning_rules').select('keyword', 'category').eq('is_approved', True).execute()
                 learned_rules = resp.data if resp.data else []
                 logger.debug(f"Loaded {len(learned_rules)} learned rules from Supabase.")
                 for rule in learned_rules:
@@ -141,18 +141,41 @@ Categorias válidas: {valid_categories_list}
 
     def find_common_prefix(self, files):
         if not files: return ""
+        
+        # Regex para capturar padrões comuns no início que devem ser cortados
+        # Ex: "01 - Kick", "[120 BPM] Snare", "Stem_04_"
+        padrao_sujeira = re.compile(
+            r'^('
+            r'\d+[\s\-_]*|'                          # "01 ", "01-", "01_"
+            r'\[.*?\][\s\-_]*|'                      # "[120 BPM] ", "[Gmaj]"
+            r'\(.*?\)[\s\-_]*|'                      # "(chorus) "
+            r'(stem|track|audio)[\s\_]*\d*[\s\-_]*'   # "Stem 01 - "
+            r')+', 
+            re.IGNORECASE
+        )
+        
+        # Na verdade, não tentaremos encontrar um "prefixo comum" rígido.
+        # Nós vamos retornar uma função ou um prefixo estático melhor.
+        # Por enquanto, mantemos a lógica de prefixo idêntico, 
+        # mas permitimos que o main limpe a sujeira também.
+        
         possibles = []
         for f in files:
             nl = f.strip()
-            for i in range(3, min(21, len(nl))):
+            # Limpa prefixos isolados primeiro
+            nl = padrao_sujeira.sub('', nl)
+            
+            for i in range(3, min(25, len(nl))):
                 px = nl[:i]
                 if px.endswith(('_', '-', ' ', '.')):
                     possibles.append(px)
         
         counter = Counter(possibles)
         for px, count in counter.most_common():
-            if count >= MIN_PREFIX_OCCURRENCES:
+            # A palavra tem que aparecer em pelo menos 3 arquivos ou 30% dos arquivos
+            if count >= max(MIN_PREFIX_OCCURRENCES, int(len(files)*0.3)):
                 return px
+        
         return ""
 
     def is_audio_silent(self, filepath, deep_check=False):
@@ -175,11 +198,11 @@ Categorias válidas: {valid_categories_list}
                         continue
             
             if max_volume is None: return False
-            if max_volume == float('-inf') or max_volume <= -91:
+            if max_volume == float('-inf') or max_volume <= -70:
                 logger.info(f"🔇 Silêncio detectado ({max_volume} dB): {os.path.basename(filepath)}")
                 return True
             if deep_check and max_volume <= -60:
-                logger.info(f"🔇 Silêncio profunda ({max_volume} dB): {os.path.basename(filepath)}")
+                logger.info(f"🔇 Silêncio profundo ({max_volume} dB): {os.path.basename(filepath)}")
                 return True
             return False
         except Exception as e:
@@ -208,11 +231,25 @@ Categorias válidas: {valid_categories_list}
             prompt = self.master_prompt.format(file_list=files_str, valid_categories_list=", ".join(val_cats))
             
             client = genai.Client(api_key=self.api_key)
-            resp = client.models.generate_content(
-                model="gemini-2.0-flash-lite",
-                contents=prompt,
-                config=types.GenerateContentConfig(max_output_tokens=2048, temperature=0.1)
-            )
+            try:
+                resp = client.models.generate_content(
+                    model="gemini-flash-latest",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(max_output_tokens=2048, temperature=0.1)
+                )
+            except Exception as api_err:
+                err_str = str(api_err).lower()
+                if "429" in err_str or "quota" in err_str:
+                    logger.warning("Cota da API Gemini excedida (Error 429). Tentando aguardar 10s...")
+                    import time
+                    time.sleep(10)
+                    resp = client.models.generate_content(
+                        model="gemini-flash-latest",
+                        contents=prompt,
+                        config=types.GenerateContentConfig(max_output_tokens=2048, temperature=0.1)
+                    )
+                else:
+                    raise api_err
             
             if not resp or not resp.text: return {}
             
