@@ -1,0 +1,6 @@
+customtkinter
+google-generativeai
+pydub
+supabase
+Pillow
+pyinstaller
