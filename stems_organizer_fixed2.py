@@ -19,7 +19,8 @@ import logging
 import customtkinter as ctk
 import tkinter as tk
 from tkinter import filedialog, messagebox
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 # Optional dependencies
 try:
@@ -81,6 +82,7 @@ class App:
         self.folder_path_full = ""
         self.execution_feedback = None
         self.is_processing = False
+        self.api_key = ""
         self.logo_image = None
         self.logo_label = None
         self.logo_image_pil = None
@@ -1114,10 +1116,12 @@ Categorias válidas: {valid_categories_list}
             return
 
         try:
-            genai.configure(api_key=key)
-            model = genai.GenerativeModel("gemini-2.5-flash-lite")
-            response = model.generate_content("Teste de conexão. Responda apenas 'OK'.", 
-                                            generation_config={'max_output_tokens': 10})
+            client = genai.Client(api_key=key)
+            response = client.models.generate_content(
+                model="gemini-2.0-flash-lite",
+                contents="Teste de conexão. Responda apenas 'OK'.",
+                config=types.GenerateContentConfig(max_output_tokens=10)
+            )
             
             if response and response.text and 'ok' in response.text.lower():
                 messagebox.showinfo("Sucesso", "✅ Chave de API válida e funcionando!")
@@ -1157,7 +1161,7 @@ Categorias válidas: {valid_categories_list}
                 try:
                     with open(CONFIG_FILE, "r", encoding='utf-8') as f:
                         api_key = f.read().strip()
-                    genai.configure(api_key=api_key)
+                    self.api_key = api_key
                 except Exception as e:
                     logger.error(f"Erro ao configurar API: {e}")
                     self.api_configured = False
@@ -1923,13 +1927,14 @@ Categorias válidas: {valid_categories_list}
             )
 
             # Chamar API
-            model = genai.GenerativeModel("gemini-2.5-flash-lite")
-            response = model.generate_content(
-                prompt,
-                generation_config={
-                    'max_output_tokens': 2048,
-                    'temperature': 0.1,
-                }
+            client = genai.Client(api_key=self.api_key)
+            response = client.models.generate_content(
+                model="gemini-2.0-flash-lite",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    max_output_tokens=2048,
+                    temperature=0.1
+                )
             )
 
             if not response or not response.text:
