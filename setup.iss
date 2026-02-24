@@ -1,6 +1,6 @@
 [Setup]
 AppName=Stems Organizer PRO
-AppVersion=1.4.0
+AppVersion=1.5.1
 AppPublisher=Prod. Aki
 AppPublisherURL=https://github.com/Davidwhs01/Stems-Organizer-PRO
 DefaultDirName={autopf}\Stems Organizer PRO
@@ -21,6 +21,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "dist\Stems Organizer PRO.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "Raiz\ffmpeg.exe"; DestDir: "{userappdata}\StemsOrganizerPro\ffmpeg"; Flags: ignoreversion
+Source: "Raiz\ffprobe.exe"; DestDir: "{userappdata}\StemsOrganizerPro\ffmpeg"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Stems Organizer PRO"; Filename: "{app}\Stems Organizer PRO.exe"

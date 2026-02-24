@@ -1,3 +1,6 @@
+"""
+Stems Organizer PRO — Aplicação Principal
+"""
 import os
 import re
 import shutil
@@ -7,18 +10,18 @@ import json
 import urllib.request
 import subprocess
 import hashlib
-import zipfile
+import winsound
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from functools import wraps
 import time
 import logging
+
 import customtkinter as ctk
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import google.generativeai as genai
 
-# Optional dependencies with graceful fallback
+# Optional dependencies
 try:
     from pydub import AudioSegment
     from pydub.exceptions import CouldntDecodeError
@@ -39,466 +42,31 @@ except ImportError:
 from PIL import Image, ImageDraw, ImageFont
 import io
 
-# --- CONFIGURAÇÃO DE LOGGING ---
+# --- Importar módulos refatorados ---
+from stems_organizer_pro.config import *
+from stems_organizer_pro.utils import retry_on_failure, check_ffmpeg, download_ffmpeg, init_ffmpeg, Tooltip
+from stems_organizer_pro.history import SessionHistory
+from stems_organizer_pro.notifications import ToastNotification
+from stems_organizer_pro.feedback import ExecutionFeedback
+from stems_organizer_pro.updater import AutoUpdater
+
+# --- Setup ---
 logging.basicConfig(
-    level=logging.INFO,  # Reduzido de DEBUG para menos verbose
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
+    handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
 
-# --- DECORATOR PARA RETRY AUTOMÁTICO ---
-def retry_on_failure(max_retries=3, delay=1.0, backoff=2.0):
-    """Decorator para retry automático em caso de falha"""
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            last_exception = None
-            current_delay = delay
-            for attempt in range(max_retries):
-                try:
-                    return func(*args, **kwargs)
-                except Exception as e:
-                    last_exception = e
-                    if attempt < max_retries - 1:
-                        logger.warning(f"Tentativa {attempt + 1} falhou: {e}. Tentando novamente em {current_delay}s...")
-                        time.sleep(current_delay)
-                        current_delay *= backoff
-            logger.error(f"Todas as {max_retries} tentativas falharam: {last_exception}")
-            raise last_exception
-        return wrapper
-    return decorator
+FFMPEG_AVAILABLE = init_ffmpeg()
 
-# --- VERIFICAÇÃO E INSTALAÇÃO DO FFMPEG ---
-def check_ffmpeg():
-    """Verifica se FFmpeg está instalado"""
-    try:
-        result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True)
-        return result.returncode == 0
-    except FileNotFoundError:
-        return False
-
-def download_ffmpeg():
-    """Baixa e instala FFmpeg automaticamente no Windows"""
-    if sys.platform != 'win32':
-        return False
-        
-    ffmpeg_dir = os.path.join(os.getenv('APPDATA', ''), 'StemsOrganizerPro', 'ffmpeg')
-    ffmpeg_exe = os.path.join(ffmpeg_dir, 'ffmpeg.exe')
-    
-    if os.path.exists(ffmpeg_exe):
-        # Adicionar ao PATH
-        os.environ['PATH'] = ffmpeg_dir + os.pathsep + os.environ.get('PATH', '')
-        return True
-    
-    try:
-        logger.info("Baixando FFmpeg...")
-        ffmpeg_url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
-        
-        os.makedirs(ffmpeg_dir, exist_ok=True)
-        zip_path = os.path.join(ffmpeg_dir, 'ffmpeg.zip')
-        
-        # Download
-        urllib.request.urlretrieve(ffmpeg_url, zip_path)
-        
-        # Extrair
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(ffmpeg_dir)
-        
-        # Encontrar e mover executáveis
-        for root, dirs, files in os.walk(ffmpeg_dir):
-            for f in files:
-                if f in ['ffmpeg.exe', 'ffprobe.exe']:
-                    src = os.path.join(root, f)
-                    dst = os.path.join(ffmpeg_dir, f)
-                    if src != dst:
-                        shutil.move(src, dst)
-        
-        # Limpar
-        os.remove(zip_path)
-        
-        # Adicionar ao PATH
-        os.environ['PATH'] = ffmpeg_dir + os.pathsep + os.environ.get('PATH', '')
-        logger.info("FFmpeg instalado com sucesso!")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Erro ao instalar FFmpeg: {e}")
-        return False
-
-# Verificar FFmpeg na inicialização
-FFMPEG_AVAILABLE = check_ffmpeg()
-if not FFMPEG_AVAILABLE:
-    logger.info("FFmpeg não encontrado. Tentando instalar automaticamente...")
-    FFMPEG_AVAILABLE = download_ffmpeg()
-
-# --- Classe Helper para Tooltips ---
-class Tooltip:
-    def __init__(self, widget, text):
-        self.widget = widget
-        self.text = text
-        self.tooltip_window = None
-        self.widget.bind("<Enter>", self.show_tooltip)
-        self.widget.bind("<Leave>", self.hide_tooltip)
-        self.widget.bind("<Destroy>", self._on_widget_destroy)
-
-    def _on_widget_destroy(self, event=None):
-        """Limpa tooltip quando widget é destruído"""
-        self.hide_tooltip(None)
-
-    def show_tooltip(self, event):
-        if self.tooltip_window or not self.text:
-            return
-        
-        # Verificar se widget ainda existe
-        try:
-            if not self.widget.winfo_exists():
-                return
-        except (tk.TclError, RuntimeError):
-            return
-            
-        try:
-            x, y, _, _ = self.widget.bbox("insert")
-        except (tk.TclError, TypeError):
-            x, y = 0, 0
-        
-        x = x + self.widget.winfo_rootx() + 25
-        y = y + self.widget.winfo_rooty() + 25
-        
-        self.tooltip_window = ctk.CTkToplevel(self.widget)
-        self.tooltip_window.wm_overrideredirect(True)
-        self.tooltip_window.wm_geometry(f"+{x}+{y}")
-        self.tooltip_window.attributes('-topmost', True)
-        
-        label = ctk.CTkLabel(
-            self.tooltip_window,
-            text=self.text,
-            fg_color="#3c3c3c",
-            corner_radius=5,
-            padx=8,
-            pady=4,
-            font=("", 12)
-        )
-        label.pack()
-
-    def hide_tooltip(self, event):
-        if self.tooltip_window:
-            try:
-                if self.tooltip_window.winfo_exists():
-                    self.tooltip_window.destroy()
-            except (tk.TclError, RuntimeError):
-                pass
-            self.tooltip_window = None
-
-# --- CONFIGURAÇÕES ---
-MIN_PREFIX_OCCURRENCES = 3
-APP_DATA_PATH = os.path.join(os.getenv('APPDATA', os.path.expanduser('~')), 'StemsOrganizerPro')
-os.makedirs(APP_DATA_PATH, exist_ok=True)
-CONFIG_FILE = os.path.join(APP_DATA_PATH, 'api_key.txt')
-RULES_URL = "https://gist.githubusercontent.com/Davidwhs01/ce7dac0b2e6619e5cac9a727269f3cf9/raw/rules.json"
-PROMPT_URL = "https://gist.githubusercontent.com/Davidwhs01/b855b1965feaf5a79802e4ff4af3bad1/raw/master_prompt.txt"
-LOGO_URL = "https://i.imgur.com/SRKbEpf.png"
-
-# --- AUTO UPDATER ---
-CURRENT_VERSION = "1.4.0"
-GITHUB_REPO = "Davidwhs01/Stems-Organizer-PRO"
-
-class AutoUpdater:
-    @staticmethod
-    def check_for_updates():
-        try:
-            url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-            request = urllib.request.Request(url)
-            request.add_header('User-Agent', 'StemsOrganizerPro/1.0')
-            with urllib.request.urlopen(request, timeout=5) as response:
-                data = json.loads(response.read().decode('utf-8'))
-                latest_version = data.get('tag_name', '').replace('v', '')
-                if latest_version and latest_version != CURRENT_VERSION:
-                    return data
-        except Exception as e:
-            logger.error(f"Erro ao checar atualizações: {e}")
-        return None
-
-    @staticmethod
-    def download_and_install_update(release_data, parent_window):
-        assets = release_data.get('assets', [])
-        installer_url = None
-        for asset in assets:
-            if asset['name'].endswith('.exe') and 'setup' in asset['name'].lower():
-                installer_url = asset['browser_download_url']
-                break
-        
-        if not installer_url:
-            messagebox.showerror("Erro de Atualização", "O instalador não foi encontrado na release mais recente.")
-            return
-
-        download_win = ctk.CTkToplevel(parent_window)
-        download_win.title("Baixando Atualização")
-        download_win.geometry("400x150")
-        download_win.attributes('-topmost', True)
-        # Centralizar
-        download_win.update_idletasks()
-        x = (parent_window.winfo_screenwidth() // 2) - (400 // 2)
-        y = (parent_window.winfo_screenheight() // 2) - (150 // 2)
-        download_win.geometry(f"+{x}+{y}")
-        
-        label = ctk.CTkLabel(download_win, text="Baixando nova versão...", font=("", 14))
-        label.pack(pady=20)
-        
-        progress = ctk.CTkProgressBar(download_win, width=300)
-        progress.pack(pady=10)
-        progress.set(0)
-
-        def download_thread():
-            temp_installer = os.path.join(APP_DATA_PATH, "StemsOrganizerPro_Updater.exe")
-            try:
-                def report_progress(block_num, block_size, total_size):
-                    if total_size > 0:
-                        percent = min(1.0, (block_num * block_size) / total_size)
-                        download_win.after(10, lambda: progress.set(percent))
-                        
-                urllib.request.urlretrieve(installer_url, temp_installer, reporthook=report_progress)
-                
-                download_win.after(10, lambda: label.configure(text="Atualização baixada! Iniciando instalador..."))
-                time.sleep(1)
-                
-                # Execute installer and quit
-                subprocess.Popen([temp_installer, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"])
-                os._exit(0)
-            except Exception as e:
-                download_win.after(0, lambda: messagebox.showerror("Erro de Atualização", f"Falha ao baixar/instalar: {e}"))
-                download_win.after(0, download_win.destroy)
-
-        threading.Thread(target=download_thread, daemon=True).start()
-
-
-# --- CREDENCIAIS DO SUPABASE ---
-# IMPORTANTE: Use variáveis de ambiente para maior segurança
-# Defina SUPABASE_URL e SUPABASE_KEY no seu sistema
-SUPABASE_URL = os.environ.get(
-    'SUPABASE_URL', 
-    "https://mytywjgptinbgpapfpum.supabase.co"
-)
-SUPABASE_KEY = os.environ.get(
-    'SUPABASE_KEY',
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im15dHl3amdwdGluYmdwYXBmcHVtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYwOTkxNzgsImV4cCI6MjA3MTY3NTE3OH0.9bShsivDy88f2wReb8ggnluk8iGnZ1eA5ALMP5lGCRQ"
-)
-
-# --- PALETA DE CORES "PROD. AKI" ---
-COLOR_BACKGROUND = "#1c1c1e"
-COLOR_FRAME = "#2c2c2e"
-COLOR_TEXT = "#E0E0E0"
-COLOR_ACCENT_PURPLE = "#9c27b0"
-COLOR_ACCENT_CYAN = "#00bcd4"
-COLOR_BUTTON_HOVER = "#7b1fa2"
-COLOR_LIGHTNING = "#e1bee7"
-COLOR_SUCCESS = "#4CAF50"
-COLOR_WARNING = "#FFC107"
-COLOR_ERROR = "#F44336"
-
-class ExecutionFeedback:
-    """Classe para gerenciar feedback visual durante execução"""
-    def __init__(self, parent_frame):
-        self.parent_frame = parent_frame
-        self.feedback_frame = None
-        self.current_step = 0
-        self.total_steps = 0
-        self.stat_labels = {}
-        self.stats = {}
-        
-    def start_feedback(self, total_steps):
-        """Inicia o feedback visual"""
-        self.total_steps = total_steps
-        self.current_step = 0
-
-        # Limpar frame pai de forma segura
-        self.clear_parent_frame()
-
-        # Criar frame de feedback
-        self.feedback_frame = ctk.CTkFrame(self.parent_frame, fg_color="transparent")
-        self.feedback_frame.pack(fill="both", expand=True, padx=20, pady=20)
-
-        # Título
-        self.title_label = ctk.CTkLabel(
-            self.feedback_frame,
-            text="🎯 Processando seus arquivos...",
-            font=("", 24, "bold"),
-            text_color=COLOR_ACCENT_CYAN
-        )
-        self.title_label.pack(pady=(40, 20))
-
-        # Container principal
-        main_container = ctk.CTkFrame(self.feedback_frame, fg_color=COLOR_FRAME)
-        main_container.pack(fill="both", expand=True, padx=40, pady=20)
-
-        # Frame de estatísticas em tempo real
-        self.stats_frame = ctk.CTkFrame(main_container, fg_color="transparent")
-        self.stats_frame.pack(fill="x", padx=20, pady=20)
-
-        # Estatísticas lado a lado
-        stats_container = ctk.CTkFrame(self.stats_frame, fg_color="transparent")
-        stats_container.pack()
-        stats_container.grid_columnconfigure((0, 1, 2, 3), weight=1)
-
-        # Cards de estatísticas
-        self.create_stat_card(stats_container, "🎵 Processados", "0", 0)
-        self.create_stat_card(stats_container, "🎤 Classificados", "0", 1)
-        self.create_stat_card(stats_container, "🗑️ Descartados", "0", 2)
-        self.create_stat_card(stats_container, "⏱️ Tempo", "00:00", 3)
-
-        # Frame de atividade atual
-        activity_frame = ctk.CTkFrame(main_container, fg_color=COLOR_BACKGROUND)
-        activity_frame.pack(fill="x", padx=20, pady=10)
-
-        self.activity_label = ctk.CTkLabel(
-            activity_frame,
-            text="Iniciando análise...",
-            font=("", 16),
-            text_color=COLOR_TEXT
-        )
-        self.activity_label.pack(pady=15)
-
-        # Lista de arquivos sendo processados
-        self.file_list_frame = ctk.CTkScrollableFrame(
-            main_container,
-            fg_color=COLOR_BACKGROUND,
-            height=200
-        )
-        self.file_list_frame.pack(fill="both", expand=True, padx=20, pady=(0, 20))
-
-        # Inicializar estatísticas
-        self.stats = {
-            'processed': 0,
-            'classified': 0,
-            'discarded': 0,
-            'start_time': time.time()
-        }
-
-    def clear_parent_frame(self):
-        """Limpa o frame pai de forma segura"""
-        try:
-            if not self.parent_frame.winfo_exists():
-                return
-        except:
-            return
-            
-        for widget in self.parent_frame.winfo_children():
-            try:
-                widget.destroy()
-            except:
-                pass
-
-    def create_stat_card(self, parent, title, value, column):
-        """Cria um card de estatística"""
-        card = ctk.CTkFrame(parent, fg_color=COLOR_BACKGROUND, width=150)
-        card.grid(row=0, column=column, padx=10, pady=10, sticky="ew")
-        card.pack_propagate(False)
-
-        title_label = ctk.CTkLabel(card, text=title, font=("", 12), text_color="#888888")
-        title_label.pack(pady=(10, 5))
-
-        value_label = ctk.CTkLabel(card, text=value, font=("", 18, "bold"), text_color=COLOR_ACCENT_PURPLE)
-        value_label.pack(pady=(0, 10))
-
-        # Armazenar referência para atualização
-        self.stat_labels[title] = value_label
-
-    def update_activity(self, message):
-        """Atualiza a atividade atual de forma thread-safe"""
-        try:
-            if hasattr(self, 'activity_label') and self.activity_label.winfo_exists():
-                self.activity_label.configure(text=f"🎯 {message}")
-        except:
-            pass
-
-    def add_file_entry(self, filename, category, icon):
-        """Adiciona entrada de arquivo processado de forma thread-safe"""
-        try:
-            if not (hasattr(self, 'file_list_frame') and self.file_list_frame.winfo_exists()):
-                return
-        except:
-            return
-        
-        try:
-            entry_frame = ctk.CTkFrame(self.file_list_frame, fg_color=COLOR_FRAME)
-            entry_frame.pack(fill="x", padx=5, pady=2)
-
-            # Icon e categoria
-            icon_label = ctk.CTkLabel(entry_frame, text=icon, width=30)
-            icon_label.pack(side="left", padx=(10, 5))
-
-            category_label = ctk.CTkLabel(
-                entry_frame,
-                text=category,
-                width=100,
-                font=("", 12, "bold"),
-                text_color=COLOR_ACCENT_CYAN
-            )
-            category_label.pack(side="left", padx=5)
-
-            # Nome do arquivo (truncar se muito longo)
-            display_name = filename[:50] + "..." if len(filename) > 50 else filename
-            filename_label = ctk.CTkLabel(
-                entry_frame,
-                text=display_name,
-                anchor="w",
-                font=("", 12)
-            )
-            filename_label.pack(side="left", fill="x", expand=True, padx=10)
-
-            # Auto-scroll para baixo de forma mais robusta
-            def scroll_to_bottom():
-                try:
-                    if hasattr(self.file_list_frame, '_parent_canvas'):
-                        canvas = self.file_list_frame._parent_canvas
-                        if canvas and canvas.winfo_exists():
-                            canvas.yview_moveto(1.0)
-                except:
-                    pass
-            
-            # Agendar scroll com delay
-            if hasattr(self.file_list_frame, '_parent_canvas'):
-                self.file_list_frame._parent_canvas.after(10, scroll_to_bottom)
-        except Exception as e:
-            print(f"DEBUG: Erro ao adicionar entrada de arquivo: {e}")
-
-    def update_stats(self, stat_type, increment=1):
-        """Atualiza estatísticas de forma thread-safe"""
-        if stat_type in self.stats:
-            self.stats[stat_type] += increment
-
-        # Atualizar labels de forma segura
-        try:
-            label_map = {
-                "🎵 Processados": 'processed',
-                "🎤 Classificados": 'classified', 
-                "🗑️ Descartados": 'discarded'
-            }
-            
-            for label_key, stat_key in label_map.items():
-                if label_key in self.stat_labels:
-                    label = self.stat_labels[label_key]
-                    if label.winfo_exists():
-                        label.configure(text=str(self.stats[stat_key]))
-            
-            # Atualizar tempo
-            if "⏱️ Tempo" in self.stat_labels:
-                time_label = self.stat_labels["⏱️ Tempo"]
-                if time_label.winfo_exists():
-                    elapsed = int(time.time() - self.stats['start_time'])
-                    mins, secs = divmod(elapsed, 60)
-                    time_label.configure(text=f"{mins:02d}:{secs:02d}")
-        except Exception as e:
-            print(f"DEBUG: Erro ao atualizar stats: {e}")
 
 class App:
     def __init__(self, root):
         self.root = root
         self.root.title("Stems Organizer Pro by Prod. Aki")
-        self.root.geometry("1100x800")
-        self.root.minsize(900, 600)
+        self.root.geometry("1200x850")
+        self.root.minsize(1000, 650)
 
         ctk.set_appearance_mode("Dark")
         self.root.configure(fg_color=COLOR_BACKGROUND)
@@ -517,14 +85,19 @@ class App:
         self.logo_label = None
         self.logo_image_pil = None
         self.logo_image_pil_full = None
+        self.current_page = "home"
+        self.sidebar_buttons = {}
         
         # Novas variáveis para melhorias
-        self.cancel_requested = False  # Para botão de cancelar
-        self.ia_cache = {}  # Cache de resultados da IA
-        self.undo_history = []  # Histórico para desfazer
-        self.processing_start_time = 0  # Para cálculo de ETA
-        self.files_processed = 0  # Contador para ETA
-        self.total_files_to_process = 0  # Total para ETA
+        self.cancel_requested = False
+        self.ia_cache = {}
+        self.undo_history = []
+        self.processing_start_time = 0
+        self.files_processed = 0
+        self.total_files_to_process = 0
+
+        # Limpeza de arquivos .old de atualizações anteriores
+        AutoUpdater.cleanup_old_files()
 
         # Inicializar Supabase
         self.init_supabase()
@@ -532,8 +105,47 @@ class App:
         self.create_widgets()
         self.load_api_key()
         
+        # Keyboard shortcuts
+        self.root.bind('<Control-o>', lambda e: self.browse_folder())
+        self.root.bind('<Control-Return>', lambda e: self.start_organization_thread() if not self.is_processing else None)
+        self.root.bind('<Control-z>', lambda e: self.undo_last_action())
+        self.root.bind('<Control-comma>', lambda e: self.open_settings_window())
+        self.root.bind('<Escape>', lambda e: self.request_cancel() if self.is_processing else None)
+        
+        # Drag and drop (via tkdnd ou fallback)
+        try:
+            self.root.drop_target_register('DND_Files')
+            self.root.dnd_bind('<<Drop>>', self._on_drop)
+        except Exception:
+            pass  # tkdnd não disponível, ignorar silenciosamente
+        
         # Iniciar verificação de atualização em background
         self.root.after(2000, self.check_updates_async)
+        
+        # Toast de boas-vindas
+        self.root.after(500, lambda: ToastNotification(self.root, f"Stems Organizer PRO v{CURRENT_VERSION}", "info", duration=2500))
+        
+        # FFmpeg status toast
+        if FFMPEG_AVAILABLE:
+            self.root.after(1500, lambda: ToastNotification(self.root, "FFmpeg detectado automaticamente", "success", duration=2000))
+        else:
+            self.root.after(1500, lambda: ToastNotification(self.root, "FFmpeg não encontrado. Algumas funções podem ser limitadas.", "warning", duration=4000))
+
+    def _on_drop(self, event):
+        """Handler para drag & drop de pastas"""
+        path = event.data.strip('{}').strip('"')
+        if os.path.isdir(path):
+            self.folder_path_full = path
+            self.folder_path_entry.configure(state="normal")
+            self.folder_path_entry.delete(0, "end")
+            self.folder_path_entry.insert(0, path)
+            self.folder_path_entry.configure(state="readonly")
+            self.start_button.configure(state="normal")
+            wav_files = [f for f in os.listdir(path) if f.lower().endswith('.wav')]
+            ToastNotification(self.root, f"Pasta carregada: {len(wav_files)} arquivos .wav", "info")
+            self.navigate_to("organize")
+        else:
+            ToastNotification(self.root, "Arraste uma pasta, não um arquivo.", "warning")
 
     def check_updates_async(self):
         """Verifica por atualizações disponíveis sem travar a UI"""
@@ -546,13 +158,15 @@ class App:
         threading.Thread(target=update_task, daemon=True).start()
 
     def prompt_update(self, version, release_data):
-        """Mostra janela perguntando se o usuário quer atualizar"""
-        response = messagebox.askyesno(
-            "Atualização Disponível", 
-            f"Uma nova versão ({version}) está disponível no GitHub!\n\nDeseja baixar e instalar a atualização agora?"
+        """Mostra toast de atualização disponível"""
+        ToastNotification(
+            self.root,
+            f"Nova versão {version} disponível!",
+            "update",
+            duration=0,  # Não auto-dismiss
+            action_text="Atualizar",
+            action_callback=lambda: AutoUpdater.download_and_install_update(release_data, self.root)
         )
-        if response:
-            AutoUpdater.download_and_install_update(release_data, self.root)
 
     def init_supabase(self):
         """Inicializa conexão com Supabase com tratamento de erro melhorado"""
@@ -571,75 +185,76 @@ class App:
             self.supabase = None
 
     def create_widgets(self):
-        self.root.grid_columnconfigure(0, weight=1)
-        self.root.grid_rowconfigure(1, weight=1)
+        self.root.grid_columnconfigure(1, weight=1)
+        self.root.grid_rowconfigure(0, weight=1)
 
-        # Header frame
-        header_frame = ctk.CTkFrame(self.root, fg_color=COLOR_FRAME, corner_radius=0)
-        header_frame.grid(row=0, column=0, sticky="ew")
-        header_frame.grid_columnconfigure(1, weight=1)
+        # ═══════════════════════ SIDEBAR ═══════════════════════
+        sidebar = ctk.CTkFrame(self.root, fg_color=COLOR_SIDEBAR, width=220, corner_radius=0)
+        sidebar.grid(row=0, column=0, rowspan=2, sticky="nsew")
+        sidebar.grid_propagate(False)
 
-        # Logo e título
-        left_header_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
-        left_header_frame.grid(row=0, column=0, padx=15, pady=10)
+        # Logo + Brand
+        brand_frame = ctk.CTkFrame(sidebar, fg_color="transparent")
+        brand_frame.pack(fill="x", padx=15, pady=(20, 5))
+        self.load_logo(brand_frame)
+        
+        brand_label = ctk.CTkLabel(brand_frame, text="Stems Organizer", font=("", 16, "bold"), text_color=COLOR_TEXT)
+        brand_label.pack(side="left")
+        
+        version_label = ctk.CTkLabel(sidebar, text=f"PRO v{CURRENT_VERSION}", font=("", 11), text_color=COLOR_TEXT_DIM)
+        version_label.pack(anchor="w", padx=20, pady=(0, 20))
 
-        # Carregar logo
-        self.load_logo(left_header_frame)
+        # Separator
+        sep = ctk.CTkFrame(sidebar, fg_color=COLOR_BORDER, height=1)
+        sep.pack(fill="x", padx=15, pady=(0, 15))
 
-        title_label = ctk.CTkLabel(
-            left_header_frame,
-            text="Stems Organizer Pro",
-            font=("", 20, "bold"),
-            text_color=COLOR_TEXT
-        )
-        title_label.pack(side="left")
+        # Navigation buttons
+        nav_items = [
+            ("organize",  "📂  Organizar",    lambda: self.navigate_to("organize")),
+            ("history",   "📊  Histórico",    lambda: self.navigate_to("history")),
+            ("settings",  "⚙️  Configurações", lambda: self.open_settings_window()),
+        ]
 
-        # Controles de pasta e configurações
-        right_header_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
-        right_header_frame.grid(row=0, column=2, sticky="e", padx=15, pady=10)
+        for key, label, cmd in nav_items:
+            btn = ctk.CTkButton(
+                sidebar, text=label, font=("", 14), anchor="w",
+                fg_color="transparent", hover_color=COLOR_SIDEBAR_ACTIVE,
+                text_color=COLOR_TEXT, height=42, corner_radius=8,
+                command=cmd
+            )
+            btn.pack(fill="x", padx=10, pady=2)
+            self.sidebar_buttons[key] = btn
 
-        self.folder_path_entry = ctk.CTkEntry(
-            right_header_frame,
-            placeholder_text="Nenhuma pasta selecionada...",
-            state="readonly",
-            width=350
-        )
-        self.folder_path_entry.grid(row=0, column=0, padx=(0, 10))
+        # Spacer
+        spacer = ctk.CTkFrame(sidebar, fg_color="transparent")
+        spacer.pack(fill="both", expand=True)
 
-        self.browse_button = ctk.CTkButton(
-            right_header_frame,
-            text="Selecionar Pasta",
-            width=140,
-            fg_color=COLOR_ACCENT_CYAN,
-            hover_color="#0097a7",
-            text_color="#111111",
-            command=self.browse_folder
-        )
-        self.browse_button.grid(row=0, column=1, padx=(0, 10))
+        # Shortcuts hint at bottom
+        shortcuts_frame = ctk.CTkFrame(sidebar, fg_color=COLOR_SURFACE, corner_radius=8)
+        shortcuts_frame.pack(fill="x", padx=10, pady=(0, 10))
+        
+        ctk.CTkLabel(shortcuts_frame, text="⌨️ Atalhos", font=("", 11, "bold"), text_color=COLOR_TEXT_DIM).pack(anchor="w", padx=10, pady=(8, 2))
+        shortcuts_text = "Ctrl+O  Abrir pasta\nCtrl+⏎  Analisar\nCtrl+Z  Desfazer\nEsc     Cancelar"
+        ctk.CTkLabel(shortcuts_frame, text=shortcuts_text, font=("Consolas", 10), text_color=COLOR_TEXT_DIM, justify="left").pack(anchor="w", padx=10, pady=(0, 8))
 
-        self.settings_button = ctk.CTkButton(
-            right_header_frame,
-            text="⚙️",
-            width=40,
-            fg_color=COLOR_FRAME,
-            hover_color=COLOR_BUTTON_HOVER,
-            command=self.open_settings_window
-        )
-        self.settings_button.grid(row=0, column=2)
-        Tooltip(self.settings_button, "Abrir Configurações e Ajuda")
+        # Credits
+        ctk.CTkLabel(sidebar, text="Made by Prod. Aki", text_color="#555555", font=("", 10)).pack(pady=(0, 15))
 
-        # Frame principal organizador visual
-        self.visual_organizer_frame = ctk.CTkFrame(self.root, fg_color=COLOR_FRAME)
-        self.visual_organizer_frame.grid(row=1, column=0, sticky="nsew", padx=15, pady=15)
+        # ═══════════════════════ MAIN AREA ═══════════════════════
+        main_container = ctk.CTkFrame(self.root, fg_color=COLOR_BACKGROUND, corner_radius=0)
+        main_container.grid(row=0, column=1, sticky="nsew")
+        main_container.grid_columnconfigure(0, weight=1)
+        main_container.grid_rowconfigure(0, weight=1)
+
+        # Content area (pages go here)
+        self.visual_organizer_frame = ctk.CTkFrame(main_container, fg_color=COLOR_BACKGROUND)
+        self.visual_organizer_frame.grid(row=0, column=0, sticky="nsew", padx=15, pady=(15, 5))
         self.visual_organizer_frame.grid_columnconfigure(0, weight=1)
         self.visual_organizer_frame.grid_rowconfigure(0, weight=1)
 
-        # Inicializar com tela de boas-vindas
-        self.show_welcome_screen()
-
-        # Footer frame
-        footer_frame = ctk.CTkFrame(self.root, fg_color=COLOR_FRAME, corner_radius=0)
-        footer_frame.grid(row=2, column=0, sticky="ew")
+        # ═══════════════════════ FOOTER (inside main) ═══════════════════════
+        footer_frame = ctk.CTkFrame(main_container, fg_color=COLOR_FRAME, corner_radius=10)
+        footer_frame.grid(row=1, column=0, sticky="ew", padx=15, pady=(5, 15))
         footer_frame.grid_columnconfigure(0, weight=1)
 
         # Progress frame
@@ -647,19 +262,10 @@ class App:
         progress_frame.grid(row=0, column=0, sticky="ew", padx=15, pady=10)
         progress_frame.grid_columnconfigure(0, weight=1)
 
-        self.status_label = ctk.CTkLabel(
-            progress_frame,
-            text="Pronto para iniciar.",
-            text_color=COLOR_TEXT,
-            anchor="w"
-        )
+        self.status_label = ctk.CTkLabel(progress_frame, text="Pronto para iniciar.", text_color=COLOR_TEXT, anchor="w", font=("", 12))
         self.status_label.grid(row=0, column=0, sticky="ew")
 
-        self.progress_bar = ctk.CTkProgressBar(
-            progress_frame,
-            mode="determinate",
-            progress_color=COLOR_ACCENT_PURPLE
-        )
+        self.progress_bar = ctk.CTkProgressBar(progress_frame, mode="determinate", progress_color=COLOR_ACCENT_PURPLE, height=6)
         self.progress_bar.set(0)
         self.progress_bar.grid(row=1, column=0, sticky="ew", pady=(5, 0))
 
@@ -667,179 +273,284 @@ class App:
         self.controls_frame = ctk.CTkFrame(footer_frame, fg_color="transparent")
         self.controls_frame.grid(row=0, column=1, rowspan=2, sticky="e", padx=15, pady=10)
 
-        analysis_options = [
-            "Análise Rápida (Padrão)",
-            "Análise Profunda (Lenta)",
-            "Nenhuma Análise (Mais Rápido)"
-        ]
+        # Folder path entry (inline in controls)
+        self.folder_path_entry = ctk.CTkEntry(
+            self.controls_frame, placeholder_text="Nenhuma pasta selecionada...",
+            state="readonly", width=280, height=32, font=("", 11),
+            fg_color=COLOR_SURFACE, border_color=COLOR_BORDER
+        )
+        self.folder_path_entry.grid(row=0, column=0, padx=(0, 8))
+
+        self.browse_button = ctk.CTkButton(
+            self.controls_frame, text="📂 Abrir", width=80, height=32,
+            fg_color=COLOR_ACCENT_CYAN, hover_color="#0891b2", text_color="#0d0d0e",
+            font=("", 12, "bold"), command=self.browse_folder
+        )
+        self.browse_button.grid(row=0, column=1, padx=(0, 8))
+
+        analysis_options = ["Análise Rápida (Padrão)", "Análise Profunda (Lenta)", "Nenhuma Análise (Mais Rápido)"]
         self.analysis_mode_combo = ctk.CTkComboBox(
-            self.controls_frame,
-            values=analysis_options,
-            button_color=COLOR_ACCENT_PURPLE,
-            border_color=COLOR_ACCENT_PURPLE,
-            dropdown_hover_color=COLOR_BUTTON_HOVER,
-            state="readonly"
+            self.controls_frame, values=analysis_options, width=180, height=32,
+            button_color=COLOR_ACCENT_PURPLE, border_color=COLOR_BORDER,
+            dropdown_hover_color=COLOR_BUTTON_HOVER, state="readonly", font=("", 11)
         )
         self.analysis_mode_combo.set(analysis_options[0])
-        self.analysis_mode_combo.grid(row=0, column=0, padx=(0, 20))
-        Tooltip(self.analysis_mode_combo, "Escolha o tipo de análise de áudio para arquivos silenciosos.")
+        self.analysis_mode_combo.grid(row=0, column=2, padx=(0, 8))
 
         self.start_button = ctk.CTkButton(
-            self.controls_frame,
-            text="Analisar",
-            font=("", 14, "bold"),
-            fg_color=COLOR_ACCENT_PURPLE,
-            hover_color=COLOR_BUTTON_HOVER,
-            command=self.start_organization_thread,
-            state="disabled",
-            width=120
+            self.controls_frame, text="⚡ Analisar", font=("", 13, "bold"), width=110, height=32,
+            fg_color=COLOR_ACCENT_PURPLE, hover_color=COLOR_BUTTON_HOVER,
+            command=self.start_organization_thread, state="disabled"
         )
-        self.start_button.grid(row=0, column=1, padx=(0, 10))
+        self.start_button.grid(row=0, column=3, padx=(0, 5))
 
         self.apply_button = ctk.CTkButton(
-            self.controls_frame,
-            text="Aplicar",
-            font=("", 14, "bold"),
-            fg_color=COLOR_ACCENT_CYAN,
-            hover_color="#0097a7",
-            text_color="#111111",
-            command=self.start_apply_thread,
-            width=120
+            self.controls_frame, text="✅ Aplicar", font=("", 13, "bold"), width=110, height=32,
+            fg_color=COLOR_SUCCESS, hover_color="#059669", text_color="#ffffff",
+            command=self.start_apply_thread
         )
-        # Botão aplicar inicialmente oculto
-        # self.apply_button.grid_remove()
-        
-        # Botão Cancelar (oculto por padrão)
-        self.cancel_button = ctk.CTkButton(
-            self.controls_frame,
-            text="❌ Cancelar",
-            font=("", 14, "bold"),
-            fg_color=COLOR_ERROR,
-            hover_color="#d32f2f",
-            command=self.request_cancel,
-            width=120
-        )
-        # Inicialmente oculto
-        
-        # Botão Desfazer
-        self.undo_button = ctk.CTkButton(
-            self.controls_frame,
-            text="↩️ Desfazer",
-            font=("", 12),
-            fg_color=COLOR_WARNING,
-            hover_color="#FFA000",
-            text_color="#111111",
-            command=self.undo_last_action,
-            width=100
-        )
-        # Inicialmente oculto
 
-        # Credits
-        credits_label = ctk.CTkLabel(
-            footer_frame,
-            text="Made by Prod. Aki",
-            text_color="#555555",
-            font=("", 10)
+        self.cancel_button = ctk.CTkButton(
+            self.controls_frame, text="❌ Cancelar", font=("", 13, "bold"), width=110, height=32,
+            fg_color=COLOR_ERROR, hover_color="#dc2626", command=self.request_cancel
         )
-        credits_label.grid(row=1, column=1, sticky="se", padx=15, pady=5)
+
+        self.undo_button = ctk.CTkButton(
+            self.controls_frame, text="↩️ Desfazer", font=("", 12), width=100, height=32,
+            fg_color=COLOR_WARNING, hover_color="#d97706", text_color="#0d0d0e",
+            command=self.undo_last_action
+        )
+
+        # Inicializar no Organizar
+        self.navigate_to("organize")
+
+    def navigate_to(self, page):
+        """Navega para uma página da sidebar com transição"""
+        self.current_page = page
+        
+        # Atualizar visual dos botões da sidebar
+        for key, btn in self.sidebar_buttons.items():
+            if key == page:
+                btn.configure(fg_color=COLOR_SIDEBAR_ACTIVE, text_color=COLOR_ACCENT_CYAN)
+            else:
+                btn.configure(fg_color="transparent", text_color=COLOR_TEXT)
+        
+        # Roteamento de páginas
+        if page == "organize":
+            if self.folder_path_full:
+                self.show_folder_preview([f for f in os.listdir(self.folder_path_full) if f.lower().endswith('.wav')][:10])
+            else:
+                self.show_welcome_screen()
+        elif page == "history":
+            self.show_history_screen()
+
+    def show_history_screen(self):
+        """Mostra tela de histórico de sessões"""
+        self.clear_frame(self.visual_organizer_frame)
+        
+        # Header
+        header = ctk.CTkFrame(self.visual_organizer_frame, fg_color="transparent")
+        header.pack(fill="x", padx=20, pady=(20, 10))
+        
+        ctk.CTkLabel(header, text="📊 Histórico de Sessões", font=("", 24, "bold"), text_color=COLOR_TEXT).pack(side="left")
+        
+        sessions = SessionHistory.load()
+        
+        if not sessions:
+            empty_frame = ctk.CTkFrame(self.visual_organizer_frame, fg_color="transparent")
+            empty_frame.pack(expand=True)
+            ctk.CTkLabel(empty_frame, text="📭", font=("", 48)).pack(pady=(30, 10))
+            ctk.CTkLabel(empty_frame, text="Nenhuma sessão registrada ainda.", font=("", 16), text_color=COLOR_TEXT_DIM).pack()
+            ctk.CTkLabel(empty_frame, text="As sessões serão salvas automaticamente após cada organização.", font=("", 13), text_color=COLOR_TEXT_DIM).pack(pady=5)
+            return
+        
+        # Lista de sessões
+        scroll = ctk.CTkScrollableFrame(self.visual_organizer_frame, fg_color="transparent")
+        scroll.pack(fill="both", expand=True, padx=20, pady=10)
+        
+        for session in reversed(sessions):
+            card = ctk.CTkFrame(scroll, fg_color=COLOR_CARD, corner_radius=10, border_width=1, border_color=COLOR_BORDER)
+            card.pack(fill="x", pady=4)
+            
+            inner = ctk.CTkFrame(card, fg_color="transparent")
+            inner.pack(fill="x", padx=15, pady=10)
+            inner.grid_columnconfigure(1, weight=1)
+            
+            # Data
+            ctk.CTkLabel(inner, text=f"📅 {session.get('date', '?')}", font=("", 13, "bold"), text_color=COLOR_ACCENT_CYAN).grid(row=0, column=0, sticky="w")
+            
+            # Pasta
+            folder = session.get('folder', '?')
+            folder_short = f"...{folder[-40:]}" if len(folder) > 40 else folder
+            ctk.CTkLabel(inner, text=folder_short, font=("", 12), text_color=COLOR_TEXT_DIM).grid(row=0, column=1, sticky="w", padx=15)
+            
+            # Stats
+            stats_text = f"📁 {session.get('files', 0)} arquivos  •  🏷️ {session.get('categories', 0)} categorias  •  ⏱️ {session.get('duration', 0)}s"
+            ctk.CTkLabel(inner, text=stats_text, font=("", 11), text_color=COLOR_TEXT_DIM).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 0))
+            
+            # Botão reabrir
+            folder_path = session.get('folder', '')
+            if os.path.isdir(folder_path):
+                reopen_btn = ctk.CTkButton(
+                    inner, text="📂 Reabrir", width=80, height=28, font=("", 11),
+                    fg_color=COLOR_SURFACE, hover_color=COLOR_ACCENT_PURPLE,
+                    command=lambda p=folder_path: self._reopen_folder(p)
+                )
+                reopen_btn.grid(row=0, column=2, rowspan=2, padx=(10, 0))
+
+    def _reopen_folder(self, path):
+        """Reabre uma pasta do histórico"""
+        self.folder_path_full = path
+        self.folder_path_entry.configure(state="normal")
+        self.folder_path_entry.delete(0, "end")
+        self.folder_path_entry.insert(0, path)
+        self.folder_path_entry.configure(state="readonly")
+        self.start_button.configure(state="normal")
+        self.navigate_to("organize")
+        ToastNotification(self.root, f"Pasta reaberta do histórico", "info")
 
     def load_logo(self, parent_frame):
-        """Carrega logo de forma mais robusta com melhor qualidade"""
-        # Primeiro tentar logo local no diretório do projeto
-        project_logo = os.path.join(os.path.dirname(__file__), "logo2.png")
-        cache_logo = os.path.join(APP_DATA_PATH, "logo2.png")
+        """Carrega logo de forma robusta com aspecto correto"""
+        # Priorizar logo2.png (quadrada 128x128) sobre logo.png (retangular)
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        logo_candidates = [
+            os.path.join(base_dir, "logo2.png"),
+            os.path.join(APP_DATA_PATH, "logo2.png"),
+            os.path.join(base_dir, "logo.png"),
+        ]
         
-        logo_size = 48  # Aumentado para melhor qualidade
+        logo_size = 40
         
         try:
-            # Priorizar logo local do projeto
-            if os.path.exists(project_logo):
-                original_image = Image.open(project_logo)
-                # Guardar imagem original para tela de boas-vindas
-                self.logo_image_pil_full = original_image.copy()
-                self.logo_image_pil = original_image.resize((logo_size, logo_size), Image.Resampling.LANCZOS)
-            elif os.path.exists(cache_logo):
-                original_image = Image.open(cache_logo)
-                self.logo_image_pil_full = original_image.copy()
-                self.logo_image_pil = original_image.resize((logo_size, logo_size), Image.Resampling.LANCZOS)
-            else:
-                # Baixar logo se não existir
+            original_image = None
+            for logo_path in logo_candidates:
+                if os.path.exists(logo_path):
+                    original_image = Image.open(logo_path)
+                    break
+            
+            if original_image is None:
+                # Baixar logo se nenhuma existe localmente
                 logger.debug("Baixando logo...")
                 request = urllib.request.Request(LOGO_URL)
-                request.add_header('User-Agent', 'StemsOrganizerPro/1.0')
-                
+                request.add_header('User-Agent', f'StemsOrganizerPro/{CURRENT_VERSION}')
                 with urllib.request.urlopen(request, timeout=10) as response:
                     image_data = response.read()
                     original_image = Image.open(io.BytesIO(image_data))
-                    self.logo_image_pil_full = original_image.copy()
-                    self.logo_image_pil = original_image.resize((logo_size, logo_size), Image.Resampling.LANCZOS)
-                    
-                    # Salvar localmente
-                    with open(cache_logo, "wb") as f:
+                    cache_path = os.path.join(APP_DATA_PATH, "logo2.png")
+                    with open(cache_path, "wb") as f:
                         f.write(image_data)
 
+            # Guardar imagem original para tela de boas-vindas
+            self.logo_image_pil_full = original_image.copy()
+            
+            # Resize mantendo aspecto com thumbnail
+            thumb = original_image.copy()
+            thumb.thumbnail((logo_size, logo_size), Image.Resampling.LANCZOS)
+            self.logo_image_pil = thumb
+
             # Criar widget de logo
-            if self.logo_image_pil:
-                self.logo_image = ctk.CTkImage(self.logo_image_pil, size=(logo_size, logo_size))
-                self.logo_label = ctk.CTkLabel(parent_frame, image=self.logo_image, text="")
-                self.logo_label.pack(side="left", padx=(0, 10))
+            w, h = thumb.size
+            self.logo_image = ctk.CTkImage(thumb, size=(w, h))
+            self.logo_label = ctk.CTkLabel(parent_frame, image=self.logo_image, text="")
+            self.logo_label.pack(side="left", padx=(0, 10))
                 
         except Exception as e:
             logger.warning(f"Logo load failed - {e}")
 
     def show_welcome_screen(self):
-        """Mostra tela de boas-vindas inicial"""
+        """Mostra tela de boas-vindas animada"""
         self.clear_frame(self.visual_organizer_frame)
 
         welcome_frame = ctk.CTkFrame(self.visual_organizer_frame, fg_color="transparent")
         welcome_frame.pack(expand=True)
 
-        # Logo grande - usar versão em alta resolução
+        # Logo grande com efeito pulsante
         logo_source = getattr(self, 'logo_image_pil_full', None) or self.logo_image_pil
         if logo_source:
-            large_logo = logo_source.resize((128, 128), Image.Resampling.LANCZOS)
-            large_logo_ctk = ctk.CTkImage(large_logo, size=(128, 128))
+            large_logo = logo_source.copy()
+            large_logo.thumbnail((120, 120), Image.Resampling.LANCZOS)
+            w, h = large_logo.size
+            large_logo_ctk = ctk.CTkImage(large_logo, size=(w, h))
             logo_label = ctk.CTkLabel(welcome_frame, image=large_logo_ctk, text="")
-            logo_label.pack(pady=(50, 20))
+            logo_label.pack(pady=(30, 15))
+            # Efeito pulsante no logo
+            self._pulse_widget(logo_label)
 
-        # Título de boas-vindas
+        # Título com animação de digitação
+        title_text = "Stems Organizer Pro"
         welcome_title = ctk.CTkLabel(
-            welcome_frame,
-            text="Bem-vindo ao Stems Organizer Pro",
-            font=("", 28, "bold"),
-            text_color=COLOR_ACCENT_CYAN
+            welcome_frame, text="", font=("", 32, "bold"), text_color=COLOR_ACCENT_CYAN
         )
-        welcome_title.pack(pady=(0, 10))
+        welcome_title.pack(pady=(0, 5))
+        self._type_animation(welcome_title, title_text)
+
+        # Linha de gradiente animada
+        gradient_line = ctk.CTkFrame(welcome_frame, fg_color=COLOR_ACCENT_PURPLE, height=3, width=200, corner_radius=2)
+        gradient_line.pack(pady=(0, 8))
 
         # Subtítulo
         subtitle = ctk.CTkLabel(
-            welcome_frame,
-            text="Organize seus stems de música automaticamente com IA",
-            font=("", 16),
-            text_color=COLOR_TEXT
+            welcome_frame, text="Organize seus stems de música automaticamente com IA",
+            font=("", 15), text_color=COLOR_TEXT_DIM
         )
-        subtitle.pack(pady=(0, 30))
+        subtitle.pack(pady=(0, 25))
 
-        # Instruções
-        instructions_frame = ctk.CTkFrame(welcome_frame, fg_color=COLOR_BACKGROUND)
-        instructions_frame.pack(padx=40, pady=20)
+        # Feature cards com fade-in escalonado
+        cards_frame = ctk.CTkFrame(welcome_frame, fg_color="transparent")
+        cards_frame.pack(padx=20, pady=10)
 
-        instructions = [
-            "➡️ 1. Selecione uma pasta contendo seus arquivos .wav",
-            "➡️ 2. Escolha o tipo de análise desejada",
-            "➡️ 3. Clique em 'Analisar' para ver o plano de organização",
-            "➡️ 4. Revise os resultados e clique em 'Aplicar'"
+        features = [
+            ("🤖", "IA Inteligente", "Classificação automática com Gemini"),
+            ("⚡", "Super Rápido", "Processamento paralelo de stems"),
+            ("🔊", "Análise de Áudio", "Detecção de silêncio com FFmpeg"),
+            ("↩️", "Desfazer", "Reverta qualquer organização")
         ]
 
-        for instruction in instructions:
-            inst_label = ctk.CTkLabel(
-                instructions_frame,
-                text=instruction,
-                font=("", 14),
-                text_color=COLOR_TEXT,
-                anchor="w"
-            )
-            inst_label.pack(pady=8, padx=30, anchor="w")
+        for i, (icon, title, desc) in enumerate(features):
+            card = ctk.CTkFrame(cards_frame, fg_color=COLOR_CARD, corner_radius=12, border_width=1, border_color=COLOR_BORDER, width=180, height=130)
+            card.grid(row=0, column=i, padx=8, pady=5)
+            card.pack_propagate(False)
+
+            ctk.CTkLabel(card, text=icon, font=("", 28)).pack(pady=(15, 5))
+            ctk.CTkLabel(card, text=title, font=("", 13, "bold"), text_color=COLOR_TEXT).pack(pady=(0, 3))
+            ctk.CTkLabel(card, text=desc, font=("", 10), text_color=COLOR_TEXT_DIM, wraplength=150).pack()
+
+            # Fade-in escalonado
+            card.grid_remove()
+            self.root.after(400 + i * 200, lambda c=card: c.grid())
+
+        # Instrução de ação
+        action_frame = ctk.CTkFrame(welcome_frame, fg_color="transparent")
+        action_frame.pack(pady=(25, 10))
+        
+        ctk.CTkLabel(
+            action_frame, text="📂  Selecione uma pasta ou arraste para começar",
+            font=("", 14), text_color=COLOR_TEXT_DIM
+        ).pack()
+
+    def _type_animation(self, label, full_text, index=0):
+        """Animação de digitação para labels"""
+        if index <= len(full_text):
+            try:
+                if label.winfo_exists():
+                    label.configure(text=full_text[:index])
+                    self.root.after(45, lambda: self._type_animation(label, full_text, index + 1))
+            except:
+                pass
+
+    def _pulse_widget(self, widget, growing=True, count=0):
+        """Efeito pulsante sutil num widget"""
+        if count >= 6:  # 3 ciclos
+            return
+        try:
+            if not widget.winfo_exists():
+                return
+            # Simular pulse alterando padding
+            pad = 5 if growing else 0
+            widget.configure(pady=pad)
+            self.root.after(400, lambda: self._pulse_widget(widget, not growing, count + 1))
+        except:
+            pass
 
     def clear_frame(self, frame):
         """Destroi todos os widgets de um frame de forma segura"""
@@ -1286,63 +997,57 @@ Categorias válidas: {valid_categories_list}
         self.ia_cache[key] = category
 
     def open_settings_window(self):
-        """Janela de configurações melhorada"""
+        """Janela de configurações premium"""
         settings_win = ctk.CTkToplevel(self.root)
-        settings_win.title("Configurações - Stems Organizer Pro")
-        settings_win.geometry("600x450")
+        settings_win.title("⚙️ Configurações")
+        settings_win.geometry("650x700")
         settings_win.transient(self.root)
         settings_win.grab_set()
+        settings_win.configure(fg_color=COLOR_BACKGROUND)
 
-        # Centralizar janela de forma mais robusta
         settings_win.update_idletasks()
         try:
-            x = (settings_win.winfo_screenwidth() // 2) - (600 // 2)
-            y = (settings_win.winfo_screenheight() // 2) - (450 // 2)
-            settings_win.geometry(f"600x450+{x}+{y}")
+            x = (settings_win.winfo_screenwidth() // 2) - (650 // 2)
+            y = (settings_win.winfo_screenheight() // 2) - (700 // 2)
+            settings_win.geometry(f"650x700+{x}+{y}")
         except:
             pass
 
-        # Configurar protocolo de fechamento
         def on_closing():
             settings_win.grab_release()
             settings_win.destroy()
-        
         settings_win.protocol("WM_DELETE_WINDOW", on_closing)
 
-        tabview = ctk.CTkTabview(settings_win, fg_color=COLOR_FRAME)
-        tabview.pack(fill="both", expand=True, padx=15, pady=15)
+        # Header
+        header = ctk.CTkFrame(settings_win, fg_color=COLOR_FRAME, corner_radius=0, height=60)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        ctk.CTkLabel(header, text="⚙️  Configurações", font=("", 20, "bold"), text_color=COLOR_TEXT).pack(side="left", padx=20, pady=15)
+        ctk.CTkLabel(header, text=f"v{CURRENT_VERSION}", font=("", 12), text_color=COLOR_TEXT_DIM).pack(side="right", padx=20)
 
-        # Tab API
-        tabview.add("🔑 Chave de API")
-        api_tab = tabview.tab("🔑 Chave de API")
+        # Scrollable content
+        content = ctk.CTkScrollableFrame(settings_win, fg_color="transparent")
+        content.pack(fill="both", expand=True, padx=15, pady=15)
 
-        api_title = ctk.CTkLabel(
-            api_tab,
-            text="Configuração da API do Google Gemini",
-            font=("", 16, "bold")
-        )
-        api_title.pack(pady=(15, 10))
+        # --- CARD 1: API Key ---
+        api_card = ctk.CTkFrame(content, fg_color=COLOR_FRAME, corner_radius=12, border_width=1, border_color=COLOR_BORDER)
+        api_card.pack(fill="x", pady=(0, 12))
 
-        api_desc = ctk.CTkLabel(
-            api_tab,
-            text="Para usar a classificação por IA, você precisa de uma chave API do Google Gemini.\n"
-                 "Obtenha gratuitamente em: https://aistudio.google.com/app/apikey",
-            font=("", 12),
-            text_color="#CCCCCC",
-            wraplength=550
-        )
-        api_desc.pack(pady=(0, 15), padx=20)
+        api_header = ctk.CTkFrame(api_card, fg_color="transparent")
+        api_header.pack(fill="x", padx=20, pady=(15, 5))
+        ctk.CTkLabel(api_header, text="🔑  Chave de API", font=("", 16, "bold"), text_color=COLOR_ACCENT_CYAN).pack(side="left")
 
-        key_frame = ctk.CTkFrame(api_tab, fg_color=COLOR_BACKGROUND)
-        key_frame.pack(fill="x", padx=20, pady=10)
+        api_status = "✅ Configurada" if self.api_configured else "⚠️ Não configurada"
+        status_color = COLOR_SUCCESS if self.api_configured else COLOR_WARNING
+        ctk.CTkLabel(api_header, text=api_status, font=("", 11), text_color=status_color).pack(side="right")
 
-        key_label = ctk.CTkLabel(key_frame, text="Chave de API:", font=("", 12))
-        key_label.pack(anchor="w", padx=15, pady=(15, 5))
+        ctk.CTkLabel(api_card, text="Google Gemini AI — obtenha grátis em aistudio.google.com", font=("", 11), text_color=COLOR_TEXT_DIM).pack(anchor="w", padx=20, pady=(0, 10))
 
-        key_entry = ctk.CTkEntry(key_frame, width=500, show="*", font=("", 12))
-        key_entry.pack(padx=15, pady=(0, 15))
+        key_frame = ctk.CTkFrame(api_card, fg_color=COLOR_BACKGROUND, corner_radius=8)
+        key_frame.pack(fill="x", padx=20, pady=(0, 5))
+        key_entry = ctk.CTkEntry(key_frame, placeholder_text="Cole sua chave API aqui...", show="•", font=("", 13), height=38, fg_color="transparent", border_width=0)
+        key_entry.pack(fill="x", padx=10, pady=8)
 
-        # Carregar chave existente
         if os.path.exists(CONFIG_FILE):
             try:
                 with open(CONFIG_FILE, "r", encoding='utf-8') as f:
@@ -1350,134 +1055,57 @@ Categorias válidas: {valid_categories_list}
             except Exception:
                 pass
 
-        button_frame = ctk.CTkFrame(api_tab, fg_color="transparent")
-        button_frame.pack(pady=15)
+        btn_frame = ctk.CTkFrame(api_card, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=20, pady=(5, 15))
+        ctk.CTkButton(btn_frame, text="🧪 Testar", font=("", 13, "bold"), width=120, height=34, fg_color=COLOR_ACCENT_PURPLE, hover_color=COLOR_BUTTON_HOVER, corner_radius=8, command=lambda: self.test_api_key(key_entry.get().strip())).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(btn_frame, text="💾 Salvar", font=("", 13, "bold"), width=120, height=34, fg_color=COLOR_ACCENT_CYAN, hover_color="#0097a7", text_color="#111111", corner_radius=8, command=lambda: self.save_api_key(key_entry.get().strip(), settings_win)).pack(side="left")
 
-        test_button = ctk.CTkButton(
-            button_frame,
-            text="Testar API",
-            fg_color=COLOR_ACCENT_PURPLE,
-            hover_color=COLOR_BUTTON_HOVER,
-            command=lambda: self.test_api_key(key_entry.get().strip())
-        )
-        test_button.pack(side="left", padx=(0, 10))
+        # --- CARD 2: Atalhos ---
+        sc_card = ctk.CTkFrame(content, fg_color=COLOR_FRAME, corner_radius=12, border_width=1, border_color=COLOR_BORDER)
+        sc_card.pack(fill="x", pady=(0, 12))
+        ctk.CTkLabel(sc_card, text="⌨️  Atalhos de Teclado", font=("", 16, "bold"), text_color=COLOR_ACCENT_CYAN).pack(anchor="w", padx=20, pady=(15, 10))
 
-        save_button = ctk.CTkButton(
-            button_frame,
-            text="Salvar Chave",
-            fg_color=COLOR_ACCENT_CYAN,
-            hover_color="#0097a7",
-            text_color="#111111",
-            command=lambda: self.save_api_key(key_entry.get().strip(), settings_win)
-        )
-        save_button.pack(side="left")
+        shortcuts = [("Ctrl + O", "Selecionar pasta"), ("Ctrl + Enter", "Iniciar análise"), ("Ctrl + Z", "Desfazer última ação"), ("Ctrl + ,", "Abrir configurações"), ("Esc", "Cancelar processamento")]
+        sg = ctk.CTkFrame(sc_card, fg_color="transparent")
+        sg.pack(fill="x", padx=20, pady=(0, 15))
+        for key, desc in shortcuts:
+            row = ctk.CTkFrame(sg, fg_color="transparent")
+            row.pack(fill="x", pady=2)
+            ctk.CTkLabel(row, text=key, font=("Consolas", 11, "bold"), width=120, fg_color=COLOR_BACKGROUND, corner_radius=6, text_color=COLOR_ACCENT_PURPLE).pack(side="left", padx=(0, 12), ipady=3)
+            ctk.CTkLabel(row, text=desc, font=("", 12), text_color=COLOR_TEXT, anchor="w").pack(side="left")
 
-        # Tab Ajuda
-        tabview.add("❓ Ajuda")
-        help_tab = tabview.tab("❓ Ajuda")
+        # --- CARD 3: Categorias ---
+        cat_card = ctk.CTkFrame(content, fg_color=COLOR_FRAME, corner_radius=12, border_width=1, border_color=COLOR_BORDER)
+        cat_card.pack(fill="x", pady=(0, 12))
+        ctk.CTkLabel(cat_card, text="🎵  Categorias Suportadas", font=("", 16, "bold"), text_color=COLOR_ACCENT_CYAN).pack(anchor="w", padx=20, pady=(15, 10))
 
-        help_scroll = ctk.CTkScrollableFrame(help_tab, fg_color="transparent")
-        help_scroll.pack(fill="both", expand=True, padx=10, pady=10)
+        categories = ["🥁 Drums", "🎸 Bass", "🎤 Vocal", "🎹 Piano", "🎛️ Synth", "🎼 Pad", "🎻 Orchestra", "🎧 Fx", "🪘 Perc", "🎺 Brass", "🎵 GTRs", "🔊 Sub", "🎶 Strings", "📦 Outros"]
+        cg = ctk.CTkFrame(cat_card, fg_color="transparent")
+        cg.pack(fill="x", padx=20, pady=(0, 15))
+        for i, cat in enumerate(categories):
+            ctk.CTkLabel(cg, text=cat, font=("", 11), width=130, fg_color=COLOR_BACKGROUND, corner_radius=6, text_color=COLOR_TEXT).grid(row=i // 4, column=i % 4, padx=4, pady=3, sticky="ew")
+        cg.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
-        help_content = [
-            ("🎯 Como usar", [
-                "1. Configure sua chave API do Google Gemini (gratuita)",
-                "2. Selecione uma pasta contendo arquivos .wav",
-                "3. Escolha o tipo de análise desejada",
-                "4. Clique em 'Analisar' para ver o plano de organização",
-                "5. Revise os resultados e clique em 'Aplicar'"
-            ]),
-            ("🎹 Tipos de Análise", [
-                "• Análise Rápida: Verifica apenas volume médio dos arquivos",
-                "• Análise Profunda: Verifica volume médio e picos de áudio",
-                "• Nenhuma Análise: Não verifica arquivos silenciosos (mais rápido)"
-            ]),
-            ("🎵 Categorias", [
-                "O programa organiza automaticamente em pastas como:",
-                "• Drums (bateria)", "• Bass (baixo)", "• GTRs (guitarras)",
-                "• Vocal", "• Synth (sintetizadores)", "• Pad", "• Orchestra",
-                "• Piano", "• Fx (efeitos)", "• Perc (percussão)"
-            ]),
-            ("⭐ Recursos", [
-                "• Classificação inteligente com IA",
-                "• Aprendizado colaborativo (melhor com uso)",
-                "• Detecção automática de arquivos silenciosos",
-                "• Prévia antes de aplicar mudanças",
-                "• Interface moderna e intuitiva"
-            ])
-        ]
+        # --- CARD 4: Sobre ---
+        ab = ctk.CTkFrame(content, fg_color=COLOR_FRAME, corner_radius=12, border_width=1, border_color=COLOR_BORDER)
+        ab.pack(fill="x", pady=(0, 12))
+        ctk.CTkFrame(ab, fg_color=COLOR_ACCENT_PURPLE, height=3, corner_radius=2).pack(fill="x", padx=20, pady=(15, 10))
 
-        for section_title, items in help_content:
-            section_frame = ctk.CTkFrame(help_scroll, fg_color=COLOR_BACKGROUND)
-            section_frame.pack(fill="x", pady=(0, 15), padx=5)
+        logo_source = getattr(self, 'logo_image_pil_full', None) or self.logo_image_pil
+        if logo_source:
+            al = logo_source.copy()
+            al.thumbnail((64, 64), Image.Resampling.LANCZOS)
+            w, h = al.size
+            alc = ctk.CTkImage(al, size=(w, h))
+            ctk.CTkLabel(ab, image=alc, text="").pack(pady=(5, 8))
 
-            title_label = ctk.CTkLabel(
-                section_frame,
-                text=section_title,
-                font=("", 14, "bold"),
-                text_color=COLOR_ACCENT_CYAN
-            )
-            title_label.pack(anchor="w", padx=15, pady=(15, 10))
+        ctk.CTkLabel(ab, text="Stems Organizer PRO", font=("", 20, "bold"), text_color=COLOR_ACCENT_CYAN).pack()
+        ctk.CTkLabel(ab, text=f"v{CURRENT_VERSION} — Refactored Edition", font=("", 12), text_color=COLOR_TEXT_DIM).pack(pady=(2, 10))
 
-            for item in items:
-                item_label = ctk.CTkLabel(
-                    section_frame,
-                    text=item,
-                    font=("", 12),
-                    anchor="w",
-                    text_color=COLOR_TEXT,
-                    wraplength=500
-                )
-                item_label.pack(anchor="w", padx=25, pady=2)
+        for ln in ["🎼  Desenvolvido por Prod. Aki", "🤖  Powered by Google Gemini AI", "💡  Interface com CustomTkinter", "☁️  Aprendizado com Supabase"]:
+            ctk.CTkLabel(ab, text=ln, font=("", 12), text_color=COLOR_TEXT).pack(pady=1)
 
-            ctk.CTkLabel(section_frame, text="").pack(pady=5)
-
-        # Tab Sobre
-        tabview.add("ℹ️ Sobre")
-        about_tab = tabview.tab("ℹ️ Sobre")
-
-        about_frame = ctk.CTkFrame(about_tab, fg_color="transparent")
-        about_frame.pack(expand=True)
-
-        if self.logo_image_pil:
-            large_logo = self.logo_image_pil.resize((64, 64), Image.Resampling.LANCZOS)
-            large_logo_ctk = ctk.CTkImage(large_logo, size=(64, 64))
-            logo_about = ctk.CTkLabel(about_frame, image=large_logo_ctk, text="")
-            logo_about.pack(pady=(30, 15))
-
-        about_title = ctk.CTkLabel(
-            about_frame,
-            text="Stems Organizer Pro",
-            font=("", 24, "bold"),
-            text_color=COLOR_ACCENT_CYAN
-        )
-        about_title.pack(pady=(0, 5))
-
-        version_label = ctk.CTkLabel(
-            about_frame,
-            text="Versão 1.4 - Optimized Edition",
-            font=("", 12),
-            text_color="#888888"
-        )
-        version_label.pack(pady=(0, 20))
-
-        about_text = """Organize automaticamente seus stems musicais com inteligência artificial.
-
-🎼 Desenvolvido por Prod. Aki
-🤖 Powered by Google Gemini AI
-💡 Interface moderna com CustomTkinter
-☁️ Aprendizado colaborativo com Supabase
-
-© 2024 Prod. Aki - Todos os direitos reservados"""
-
-        about_desc = ctk.CTkLabel(
-            about_frame,
-            text=about_text,
-            font=("", 12),
-            text_color=COLOR_TEXT,
-            justify="center"
-        )
-        about_desc.pack(pady=20)
+        ctk.CTkLabel(ab, text="© 2024-2026 Prod. Aki", font=("", 10), text_color=COLOR_TEXT_DIM).pack(pady=(10, 15))
 
     def test_api_key(self, key):
         """Testa a chave de API com melhor feedback"""
@@ -1903,11 +1531,11 @@ Categorias válidas: {valid_categories_list}
     def start_apply_thread(self):
         """Inicia aplicação das mudanças em thread separada"""
         if not self.planned_actions:
-            messagebox.showinfo("Info", "Nenhuma ação para aplicar.")
+            ToastNotification(self.root, "Nenhuma ação para aplicar.", "info")
             return
 
         if self.is_processing:
-            messagebox.showwarning("Aviso", "Uma operação já está em andamento.")
+            ToastNotification(self.root, "Uma operação já está em andamento.", "warning")
             return
 
         # Confirmar aplicação
@@ -2056,10 +1684,26 @@ Categorias válidas: {valid_categories_list}
             self.is_processing = False
             self.planned_actions = []
             self.root.after(0, self.enable_controls_after_apply)
+            # Som de conclusão
+            try:
+                winsound.PlaySound("SystemExclamation", winsound.SND_ALIAS | winsound.SND_ASYNC)
+            except Exception:
+                pass
 
     def show_completion_screen(self, success_count, error_count, errors):
         """Mostra tela de conclusão"""
         self.clear_frame(self.visual_organizer_frame)
+
+        # Salvar no histórico de sessões
+        duration = time.time() - self.processing_start_time if self.processing_start_time else 0
+        categories = len(set(a.get('category', '') for a in (self.undo_history[-1] if self.undo_history else []) if a.get('type') == 'move'))
+        SessionHistory.add(self.folder_path_full, success_count, max(categories, 1), duration)
+
+        # Toast de conclusão
+        if error_count == 0:
+            ToastNotification(self.root, f"✅ {success_count} arquivos organizados com sucesso!", "success")
+        else:
+            ToastNotification(self.root, f"⚠️ {success_count} OK, {error_count} erros", "warning")
 
         completion_frame = ctk.CTkFrame(self.visual_organizer_frame, fg_color="transparent")
         completion_frame.pack(expand=True)

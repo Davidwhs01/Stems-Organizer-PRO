@@ -22,3 +22,6 @@ venv.bak/
 StemsOrganizerPro/
 *.log
 *.sqlite
+
+gh/
+gh.zip
