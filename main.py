@@ -77,8 +77,7 @@ class App:
 
         # Inicializar todas as variáveis
         self.api_configured = False
-        self.classifier.PARENT_FOLDER_MAP = {}
-        self.classifier.LOCAL_CLASSIFICATION_RULES = {}
+
         self.planned_actions = []
         self.supabase = None
         self.master_prompt = ""

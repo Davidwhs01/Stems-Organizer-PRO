@@ -1,6 +1,6 @@
 [Setup]
 AppName=Stems Organizer PRO
-AppVersion=1.5.2
+AppVersion=1.5.3
 AppPublisher=Prod. Aki
 AppPublisherURL=https://github.com/Davidwhs01/Stems-Organizer-PRO
 DefaultDirName={autopf}\Stems Organizer PRO
