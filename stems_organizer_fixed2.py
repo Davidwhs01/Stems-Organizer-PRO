@@ -997,63 +997,57 @@ Categorias válidas: {valid_categories_list}
         self.ia_cache[key] = category
 
     def open_settings_window(self):
-        """Janela de configurações melhorada"""
+        """Janela de configurações premium"""
         settings_win = ctk.CTkToplevel(self.root)
-        settings_win.title("Configurações - Stems Organizer Pro")
-        settings_win.geometry("600x450")
+        settings_win.title("⚙️ Configurações")
+        settings_win.geometry("650x700")
         settings_win.transient(self.root)
         settings_win.grab_set()
+        settings_win.configure(fg_color=COLOR_BACKGROUND)
 
-        # Centralizar janela de forma mais robusta
         settings_win.update_idletasks()
         try:
-            x = (settings_win.winfo_screenwidth() // 2) - (600 // 2)
-            y = (settings_win.winfo_screenheight() // 2) - (450 // 2)
-            settings_win.geometry(f"600x450+{x}+{y}")
+            x = (settings_win.winfo_screenwidth() // 2) - (650 // 2)
+            y = (settings_win.winfo_screenheight() // 2) - (700 // 2)
+            settings_win.geometry(f"650x700+{x}+{y}")
         except:
             pass
 
-        # Configurar protocolo de fechamento
         def on_closing():
             settings_win.grab_release()
             settings_win.destroy()
-        
         settings_win.protocol("WM_DELETE_WINDOW", on_closing)
 
-        tabview = ctk.CTkTabview(settings_win, fg_color=COLOR_FRAME)
-        tabview.pack(fill="both", expand=True, padx=15, pady=15)
+        # Header
+        header = ctk.CTkFrame(settings_win, fg_color=COLOR_FRAME, corner_radius=0, height=60)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        ctk.CTkLabel(header, text="⚙️  Configurações", font=("", 20, "bold"), text_color=COLOR_TEXT).pack(side="left", padx=20, pady=15)
+        ctk.CTkLabel(header, text=f"v{CURRENT_VERSION}", font=("", 12), text_color=COLOR_TEXT_DIM).pack(side="right", padx=20)
 
-        # Tab API
-        tabview.add("🔑 Chave de API")
-        api_tab = tabview.tab("🔑 Chave de API")
+        # Scrollable content
+        content = ctk.CTkScrollableFrame(settings_win, fg_color="transparent")
+        content.pack(fill="both", expand=True, padx=15, pady=15)
 
-        api_title = ctk.CTkLabel(
-            api_tab,
-            text="Configuração da API do Google Gemini",
-            font=("", 16, "bold")
-        )
-        api_title.pack(pady=(15, 10))
+        # --- CARD 1: API Key ---
+        api_card = ctk.CTkFrame(content, fg_color=COLOR_FRAME, corner_radius=12, border_width=1, border_color=COLOR_BORDER)
+        api_card.pack(fill="x", pady=(0, 12))
 
-        api_desc = ctk.CTkLabel(
-            api_tab,
-            text="Para usar a classificação por IA, você precisa de uma chave API do Google Gemini.\n"
-                 "Obtenha gratuitamente em: https://aistudio.google.com/app/apikey",
-            font=("", 12),
-            text_color="#CCCCCC",
-            wraplength=550
-        )
-        api_desc.pack(pady=(0, 15), padx=20)
+        api_header = ctk.CTkFrame(api_card, fg_color="transparent")
+        api_header.pack(fill="x", padx=20, pady=(15, 5))
+        ctk.CTkLabel(api_header, text="🔑  Chave de API", font=("", 16, "bold"), text_color=COLOR_ACCENT_CYAN).pack(side="left")
 
-        key_frame = ctk.CTkFrame(api_tab, fg_color=COLOR_BACKGROUND)
-        key_frame.pack(fill="x", padx=20, pady=10)
+        api_status = "✅ Configurada" if self.api_configured else "⚠️ Não configurada"
+        status_color = COLOR_SUCCESS if self.api_configured else COLOR_WARNING
+        ctk.CTkLabel(api_header, text=api_status, font=("", 11), text_color=status_color).pack(side="right")
 
-        key_label = ctk.CTkLabel(key_frame, text="Chave de API:", font=("", 12))
-        key_label.pack(anchor="w", padx=15, pady=(15, 5))
+        ctk.CTkLabel(api_card, text="Google Gemini AI — obtenha grátis em aistudio.google.com", font=("", 11), text_color=COLOR_TEXT_DIM).pack(anchor="w", padx=20, pady=(0, 10))
 
-        key_entry = ctk.CTkEntry(key_frame, width=500, show="*", font=("", 12))
-        key_entry.pack(padx=15, pady=(0, 15))
+        key_frame = ctk.CTkFrame(api_card, fg_color=COLOR_BACKGROUND, corner_radius=8)
+        key_frame.pack(fill="x", padx=20, pady=(0, 5))
+        key_entry = ctk.CTkEntry(key_frame, placeholder_text="Cole sua chave API aqui...", show="•", font=("", 13), height=38, fg_color="transparent", border_width=0)
+        key_entry.pack(fill="x", padx=10, pady=8)
 
-        # Carregar chave existente
         if os.path.exists(CONFIG_FILE):
             try:
                 with open(CONFIG_FILE, "r", encoding='utf-8') as f:
@@ -1061,134 +1055,57 @@ Categorias válidas: {valid_categories_list}
             except Exception:
                 pass
 
-        button_frame = ctk.CTkFrame(api_tab, fg_color="transparent")
-        button_frame.pack(pady=15)
+        btn_frame = ctk.CTkFrame(api_card, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=20, pady=(5, 15))
+        ctk.CTkButton(btn_frame, text="🧪 Testar", font=("", 13, "bold"), width=120, height=34, fg_color=COLOR_ACCENT_PURPLE, hover_color=COLOR_BUTTON_HOVER, corner_radius=8, command=lambda: self.test_api_key(key_entry.get().strip())).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(btn_frame, text="💾 Salvar", font=("", 13, "bold"), width=120, height=34, fg_color=COLOR_ACCENT_CYAN, hover_color="#0097a7", text_color="#111111", corner_radius=8, command=lambda: self.save_api_key(key_entry.get().strip(), settings_win)).pack(side="left")
 
-        test_button = ctk.CTkButton(
-            button_frame,
-            text="Testar API",
-            fg_color=COLOR_ACCENT_PURPLE,
-            hover_color=COLOR_BUTTON_HOVER,
-            command=lambda: self.test_api_key(key_entry.get().strip())
-        )
-        test_button.pack(side="left", padx=(0, 10))
+        # --- CARD 2: Atalhos ---
+        sc_card = ctk.CTkFrame(content, fg_color=COLOR_FRAME, corner_radius=12, border_width=1, border_color=COLOR_BORDER)
+        sc_card.pack(fill="x", pady=(0, 12))
+        ctk.CTkLabel(sc_card, text="⌨️  Atalhos de Teclado", font=("", 16, "bold"), text_color=COLOR_ACCENT_CYAN).pack(anchor="w", padx=20, pady=(15, 10))
 
-        save_button = ctk.CTkButton(
-            button_frame,
-            text="Salvar Chave",
-            fg_color=COLOR_ACCENT_CYAN,
-            hover_color="#0097a7",
-            text_color="#111111",
-            command=lambda: self.save_api_key(key_entry.get().strip(), settings_win)
-        )
-        save_button.pack(side="left")
+        shortcuts = [("Ctrl + O", "Selecionar pasta"), ("Ctrl + Enter", "Iniciar análise"), ("Ctrl + Z", "Desfazer última ação"), ("Ctrl + ,", "Abrir configurações"), ("Esc", "Cancelar processamento")]
+        sg = ctk.CTkFrame(sc_card, fg_color="transparent")
+        sg.pack(fill="x", padx=20, pady=(0, 15))
+        for key, desc in shortcuts:
+            row = ctk.CTkFrame(sg, fg_color="transparent")
+            row.pack(fill="x", pady=2)
+            ctk.CTkLabel(row, text=key, font=("Consolas", 11, "bold"), width=120, fg_color=COLOR_BACKGROUND, corner_radius=6, text_color=COLOR_ACCENT_PURPLE).pack(side="left", padx=(0, 12), ipady=3)
+            ctk.CTkLabel(row, text=desc, font=("", 12), text_color=COLOR_TEXT, anchor="w").pack(side="left")
 
-        # Tab Ajuda
-        tabview.add("❓ Ajuda")
-        help_tab = tabview.tab("❓ Ajuda")
+        # --- CARD 3: Categorias ---
+        cat_card = ctk.CTkFrame(content, fg_color=COLOR_FRAME, corner_radius=12, border_width=1, border_color=COLOR_BORDER)
+        cat_card.pack(fill="x", pady=(0, 12))
+        ctk.CTkLabel(cat_card, text="🎵  Categorias Suportadas", font=("", 16, "bold"), text_color=COLOR_ACCENT_CYAN).pack(anchor="w", padx=20, pady=(15, 10))
 
-        help_scroll = ctk.CTkScrollableFrame(help_tab, fg_color="transparent")
-        help_scroll.pack(fill="both", expand=True, padx=10, pady=10)
+        categories = ["🥁 Drums", "🎸 Bass", "🎤 Vocal", "🎹 Piano", "🎛️ Synth", "🎼 Pad", "🎻 Orchestra", "🎧 Fx", "🪘 Perc", "🎺 Brass", "🎵 GTRs", "🔊 Sub", "🎶 Strings", "📦 Outros"]
+        cg = ctk.CTkFrame(cat_card, fg_color="transparent")
+        cg.pack(fill="x", padx=20, pady=(0, 15))
+        for i, cat in enumerate(categories):
+            ctk.CTkLabel(cg, text=cat, font=("", 11), width=130, fg_color=COLOR_BACKGROUND, corner_radius=6, text_color=COLOR_TEXT).grid(row=i // 4, column=i % 4, padx=4, pady=3, sticky="ew")
+        cg.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
-        help_content = [
-            ("🎯 Como usar", [
-                "1. Configure sua chave API do Google Gemini (gratuita)",
-                "2. Selecione uma pasta contendo arquivos .wav",
-                "3. Escolha o tipo de análise desejada",
-                "4. Clique em 'Analisar' para ver o plano de organização",
-                "5. Revise os resultados e clique em 'Aplicar'"
-            ]),
-            ("🎹 Tipos de Análise", [
-                "• Análise Rápida: Verifica apenas volume médio dos arquivos",
-                "• Análise Profunda: Verifica volume médio e picos de áudio",
-                "• Nenhuma Análise: Não verifica arquivos silenciosos (mais rápido)"
-            ]),
-            ("🎵 Categorias", [
-                "O programa organiza automaticamente em pastas como:",
-                "• Drums (bateria)", "• Bass (baixo)", "• GTRs (guitarras)",
-                "• Vocal", "• Synth (sintetizadores)", "• Pad", "• Orchestra",
-                "• Piano", "• Fx (efeitos)", "• Perc (percussão)"
-            ]),
-            ("⭐ Recursos", [
-                "• Classificação inteligente com IA",
-                "• Aprendizado colaborativo (melhor com uso)",
-                "• Detecção automática de arquivos silenciosos",
-                "• Prévia antes de aplicar mudanças",
-                "• Interface moderna e intuitiva"
-            ])
-        ]
+        # --- CARD 4: Sobre ---
+        ab = ctk.CTkFrame(content, fg_color=COLOR_FRAME, corner_radius=12, border_width=1, border_color=COLOR_BORDER)
+        ab.pack(fill="x", pady=(0, 12))
+        ctk.CTkFrame(ab, fg_color=COLOR_ACCENT_PURPLE, height=3, corner_radius=2).pack(fill="x", padx=20, pady=(15, 10))
 
-        for section_title, items in help_content:
-            section_frame = ctk.CTkFrame(help_scroll, fg_color=COLOR_BACKGROUND)
-            section_frame.pack(fill="x", pady=(0, 15), padx=5)
+        logo_source = getattr(self, 'logo_image_pil_full', None) or self.logo_image_pil
+        if logo_source:
+            al = logo_source.copy()
+            al.thumbnail((64, 64), Image.Resampling.LANCZOS)
+            w, h = al.size
+            alc = ctk.CTkImage(al, size=(w, h))
+            ctk.CTkLabel(ab, image=alc, text="").pack(pady=(5, 8))
 
-            title_label = ctk.CTkLabel(
-                section_frame,
-                text=section_title,
-                font=("", 14, "bold"),
-                text_color=COLOR_ACCENT_CYAN
-            )
-            title_label.pack(anchor="w", padx=15, pady=(15, 10))
+        ctk.CTkLabel(ab, text="Stems Organizer PRO", font=("", 20, "bold"), text_color=COLOR_ACCENT_CYAN).pack()
+        ctk.CTkLabel(ab, text=f"v{CURRENT_VERSION} — Refactored Edition", font=("", 12), text_color=COLOR_TEXT_DIM).pack(pady=(2, 10))
 
-            for item in items:
-                item_label = ctk.CTkLabel(
-                    section_frame,
-                    text=item,
-                    font=("", 12),
-                    anchor="w",
-                    text_color=COLOR_TEXT,
-                    wraplength=500
-                )
-                item_label.pack(anchor="w", padx=25, pady=2)
+        for ln in ["🎼  Desenvolvido por Prod. Aki", "🤖  Powered by Google Gemini AI", "💡  Interface com CustomTkinter", "☁️  Aprendizado com Supabase"]:
+            ctk.CTkLabel(ab, text=ln, font=("", 12), text_color=COLOR_TEXT).pack(pady=1)
 
-            ctk.CTkLabel(section_frame, text="").pack(pady=5)
-
-        # Tab Sobre
-        tabview.add("ℹ️ Sobre")
-        about_tab = tabview.tab("ℹ️ Sobre")
-
-        about_frame = ctk.CTkFrame(about_tab, fg_color="transparent")
-        about_frame.pack(expand=True)
-
-        if self.logo_image_pil:
-            large_logo = self.logo_image_pil.resize((64, 64), Image.Resampling.LANCZOS)
-            large_logo_ctk = ctk.CTkImage(large_logo, size=(64, 64))
-            logo_about = ctk.CTkLabel(about_frame, image=large_logo_ctk, text="")
-            logo_about.pack(pady=(30, 15))
-
-        about_title = ctk.CTkLabel(
-            about_frame,
-            text="Stems Organizer Pro",
-            font=("", 24, "bold"),
-            text_color=COLOR_ACCENT_CYAN
-        )
-        about_title.pack(pady=(0, 5))
-
-        version_label = ctk.CTkLabel(
-            about_frame,
-            text="Versão 1.4 - Optimized Edition",
-            font=("", 12),
-            text_color="#888888"
-        )
-        version_label.pack(pady=(0, 20))
-
-        about_text = """Organize automaticamente seus stems musicais com inteligência artificial.
-
-🎼 Desenvolvido por Prod. Aki
-🤖 Powered by Google Gemini AI
-💡 Interface moderna com CustomTkinter
-☁️ Aprendizado colaborativo com Supabase
-
-© 2024 Prod. Aki - Todos os direitos reservados"""
-
-        about_desc = ctk.CTkLabel(
-            about_frame,
-            text=about_text,
-            font=("", 12),
-            text_color=COLOR_TEXT,
-            justify="center"
-        )
-        about_desc.pack(pady=20)
+        ctk.CTkLabel(ab, text="© 2024-2026 Prod. Aki", font=("", 10), text_color=COLOR_TEXT_DIM).pack(pady=(10, 15))
 
     def test_api_key(self, key):
         """Testa a chave de API com melhor feedback"""
