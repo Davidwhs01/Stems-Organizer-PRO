@@ -201,6 +201,79 @@ RULES_URL = "https://gist.githubusercontent.com/Davidwhs01/ce7dac0b2e6619e5cac9a
 PROMPT_URL = "https://gist.githubusercontent.com/Davidwhs01/b855b1965feaf5a79802e4ff4af3bad1/raw/master_prompt.txt"
 LOGO_URL = "https://i.imgur.com/SRKbEpf.png"
 
+# --- AUTO UPDATER ---
+CURRENT_VERSION = "1.4.0"
+GITHUB_REPO = "Davidwhs01/Stems-Organizer-PRO"
+
+class AutoUpdater:
+    @staticmethod
+    def check_for_updates():
+        try:
+            url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+            request = urllib.request.Request(url)
+            request.add_header('User-Agent', 'StemsOrganizerPro/1.0')
+            with urllib.request.urlopen(request, timeout=5) as response:
+                data = json.loads(response.read().decode('utf-8'))
+                latest_version = data.get('tag_name', '').replace('v', '')
+                if latest_version and latest_version != CURRENT_VERSION:
+                    return data
+        except Exception as e:
+            logger.error(f"Erro ao checar atualizações: {e}")
+        return None
+
+    @staticmethod
+    def download_and_install_update(release_data, parent_window):
+        assets = release_data.get('assets', [])
+        installer_url = None
+        for asset in assets:
+            if asset['name'].endswith('.exe') and 'setup' in asset['name'].lower():
+                installer_url = asset['browser_download_url']
+                break
+        
+        if not installer_url:
+            messagebox.showerror("Erro de Atualização", "O instalador não foi encontrado na release mais recente.")
+            return
+
+        download_win = ctk.CTkToplevel(parent_window)
+        download_win.title("Baixando Atualização")
+        download_win.geometry("400x150")
+        download_win.attributes('-topmost', True)
+        # Centralizar
+        download_win.update_idletasks()
+        x = (parent_window.winfo_screenwidth() // 2) - (400 // 2)
+        y = (parent_window.winfo_screenheight() // 2) - (150 // 2)
+        download_win.geometry(f"+{x}+{y}")
+        
+        label = ctk.CTkLabel(download_win, text="Baixando nova versão...", font=("", 14))
+        label.pack(pady=20)
+        
+        progress = ctk.CTkProgressBar(download_win, width=300)
+        progress.pack(pady=10)
+        progress.set(0)
+
+        def download_thread():
+            temp_installer = os.path.join(APP_DATA_PATH, "StemsOrganizerPro_Updater.exe")
+            try:
+                def report_progress(block_num, block_size, total_size):
+                    if total_size > 0:
+                        percent = min(1.0, (block_num * block_size) / total_size)
+                        download_win.after(10, lambda: progress.set(percent))
+                        
+                urllib.request.urlretrieve(installer_url, temp_installer, reporthook=report_progress)
+                
+                download_win.after(10, lambda: label.configure(text="Atualização baixada! Iniciando instalador..."))
+                time.sleep(1)
+                
+                # Execute installer and quit
+                subprocess.Popen([temp_installer, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"])
+                os._exit(0)
+            except Exception as e:
+                download_win.after(0, lambda: messagebox.showerror("Erro de Atualização", f"Falha ao baixar/instalar: {e}"))
+                download_win.after(0, download_win.destroy)
+
+        threading.Thread(target=download_thread, daemon=True).start()
+
+
 # --- CREDENCIAIS DO SUPABASE ---
 # IMPORTANTE: Use variáveis de ambiente para maior segurança
 # Defina SUPABASE_URL e SUPABASE_KEY no seu sistema
@@ -458,6 +531,28 @@ class App:
         
         self.create_widgets()
         self.load_api_key()
+        
+        # Iniciar verificação de atualização em background
+        self.root.after(2000, self.check_updates_async)
+
+    def check_updates_async(self):
+        """Verifica por atualizações disponíveis sem travar a UI"""
+        def update_task():
+            release_data = AutoUpdater.check_for_updates()
+            if release_data:
+                version = release_data.get('tag_name', '')
+                self.root.after(0, lambda: self.prompt_update(version, release_data))
+        
+        threading.Thread(target=update_task, daemon=True).start()
+
+    def prompt_update(self, version, release_data):
+        """Mostra janela perguntando se o usuário quer atualizar"""
+        response = messagebox.askyesno(
+            "Atualização Disponível", 
+            f"Uma nova versão ({version}) está disponível no GitHub!\n\nDeseja baixar e instalar a atualização agora?"
+        )
+        if response:
+            AutoUpdater.download_and_install_update(release_data, self.root)
 
     def init_supabase(self):
         """Inicializa conexão com Supabase com tratamento de erro melhorado"""

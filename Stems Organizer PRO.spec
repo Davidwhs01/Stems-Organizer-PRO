@@ -1,12 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-
 a = Analysis(
-    ['StemsOrganizerApp5.py'],
+    ['stems_organizer_fixed2.py'],
     pathex=[],
     binaries=[],
-    datas=[('A:\\Programas\\Plugins\\Python\\Lib\\site-packages\\customtkinter', 'customtkinter/')],
-    hiddenimports=[],
+    datas=[('logo.png', '.'), ('logo2.png', '.')],
+    hiddenimports=['customtkinter', 'pydub', 'supabase', 'PIL'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -35,5 +34,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['A:\\Downloads\\Stems Organizer PRO\\logo.ico'],
+    icon=['logo.png'],
 )
