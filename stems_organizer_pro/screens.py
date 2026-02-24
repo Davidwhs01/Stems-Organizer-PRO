@@ -30,7 +30,7 @@ def show_welcome_screen(app):
         logo_label = ctk.CTkLabel(welcome_frame, image=large_logo_ctk, text="")
         logo_label.pack(pady=(30, 15))
         # Efeito pulsante no logo
-        app._pulse_widget(logo_label)
+        _pulse_widget(app, logo_label)
 
     # Título com animação de digitação
     title_text = "Stems Organizer Pro"
@@ -38,7 +38,7 @@ def show_welcome_screen(app):
         welcome_frame, text="", font=("", 32, "bold"), text_color=COLOR_ACCENT_CYAN
     )
     welcome_title.pack(pady=(0, 5))
-    app._type_animation(welcome_title, title_text)
+    _type_animation(app, welcome_title, title_text)
 
     # Linha de gradiente animada
     gradient_line = ctk.CTkFrame(welcome_frame, fg_color=COLOR_ACCENT_PURPLE, height=3, width=200, corner_radius=2)
@@ -90,7 +90,7 @@ def _type_animation(app, label, full_text, index=0):
         try:
             if label.winfo_exists():
                 label.configure(text=full_text[:index])
-                app.root.after(45, lambda: app._type_animation(label, full_text, index + 1))
+                app.root.after(45, lambda: _type_animation(app, label, full_text, index + 1))
         except:
             pass
 
@@ -104,7 +104,7 @@ def _pulse_widget(app, widget, growing=True, count=0):
         # Simular pulse alterando padding
         pad = 5 if growing else 0
         widget.configure(pady=pad)
-        app.root.after(400, lambda: app._pulse_widget(widget, not growing, count + 1))
+        app.root.after(400, lambda: _pulse_widget(app, widget, not growing, count + 1))
     except:
         pass
 

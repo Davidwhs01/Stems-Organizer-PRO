@@ -1,5 +1,6 @@
 customtkinter
 google-generativeai
+google-genai
 pydub
 supabase
 Pillow
