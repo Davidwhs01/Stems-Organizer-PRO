@@ -21,6 +21,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "dist\Stems Organizer PRO.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "Raiz\ffmpeg.exe"; DestDir: "{userappdata}\StemsOrganizerPro\ffmpeg"; Flags: ignoreversion
+Source: "Raiz\ffprobe.exe"; DestDir: "{userappdata}\StemsOrganizerPro\ffmpeg"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Stems Organizer PRO"; Filename: "{app}\Stems Organizer PRO.exe"
