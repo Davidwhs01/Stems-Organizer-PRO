@@ -74,6 +74,11 @@ def retry_on_failure(max_retries=3, delay=1.0, backoff=2.0):
 # --- VERIFICAÇÃO E INSTALAÇÃO DO FFMPEG ---
 def check_ffmpeg():
     """Verifica se FFmpeg está instalado"""
+    # Adiciona o diretório local ao PATH temporariamente para a sessão caso o instalador tenha colocado lá
+    ffmpeg_dir = os.path.join(os.getenv('APPDATA', ''), 'StemsOrganizerPro', 'ffmpeg')
+    if os.path.exists(ffmpeg_dir):
+        os.environ['PATH'] = ffmpeg_dir + os.pathsep + os.environ.get('PATH', '')
+        
     try:
         result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True)
         return result.returncode == 0
@@ -202,7 +207,7 @@ PROMPT_URL = "https://gist.githubusercontent.com/Davidwhs01/b855b1965feaf5a79802
 LOGO_URL = "https://i.imgur.com/SRKbEpf.png"
 
 # --- AUTO UPDATER ---
-CURRENT_VERSION = "1.4.0"
+CURRENT_VERSION = "1.4.1"
 GITHUB_REPO = "Davidwhs01/Stems-Organizer-PRO"
 
 class AutoUpdater:
