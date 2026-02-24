@@ -5,16 +5,134 @@ import sys
 import threading
 import json
 import urllib.request
+import subprocess
+import hashlib
+import zipfile
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import wraps
 import time
+import logging
 import customtkinter as ctk
+import tkinter as tk
 from tkinter import filedialog, messagebox
 import google.generativeai as genai
-from pydub import AudioSegment
-from pydub.exceptions import CouldntDecodeError
-from supabase import create_client, Client
+
+# Optional dependencies with graceful fallback
+try:
+    from pydub import AudioSegment
+    from pydub.exceptions import CouldntDecodeError
+    PYDUB_AVAILABLE = True
+except ImportError:
+    PYDUB_AVAILABLE = False
+    AudioSegment = None
+    CouldntDecodeError = Exception
+
+try:
+    from supabase import create_client, Client
+    SUPABASE_AVAILABLE = True
+except ImportError:
+    SUPABASE_AVAILABLE = False
+    create_client = None
+    Client = None
+
 from PIL import Image, ImageDraw, ImageFont
 import io
+
+# --- CONFIGURAÇÃO DE LOGGING ---
+logging.basicConfig(
+    level=logging.INFO,  # Reduzido de DEBUG para menos verbose
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# --- DECORATOR PARA RETRY AUTOMÁTICO ---
+def retry_on_failure(max_retries=3, delay=1.0, backoff=2.0):
+    """Decorator para retry automático em caso de falha"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            current_delay = delay
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Tentativa {attempt + 1} falhou: {e}. Tentando novamente em {current_delay}s...")
+                        time.sleep(current_delay)
+                        current_delay *= backoff
+            logger.error(f"Todas as {max_retries} tentativas falharam: {last_exception}")
+            raise last_exception
+        return wrapper
+    return decorator
+
+# --- VERIFICAÇÃO E INSTALAÇÃO DO FFMPEG ---
+def check_ffmpeg():
+    """Verifica se FFmpeg está instalado"""
+    try:
+        result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True)
+        return result.returncode == 0
+    except FileNotFoundError:
+        return False
+
+def download_ffmpeg():
+    """Baixa e instala FFmpeg automaticamente no Windows"""
+    if sys.platform != 'win32':
+        return False
+        
+    ffmpeg_dir = os.path.join(os.getenv('APPDATA', ''), 'StemsOrganizerPro', 'ffmpeg')
+    ffmpeg_exe = os.path.join(ffmpeg_dir, 'ffmpeg.exe')
+    
+    if os.path.exists(ffmpeg_exe):
+        # Adicionar ao PATH
+        os.environ['PATH'] = ffmpeg_dir + os.pathsep + os.environ.get('PATH', '')
+        return True
+    
+    try:
+        logger.info("Baixando FFmpeg...")
+        ffmpeg_url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+        
+        os.makedirs(ffmpeg_dir, exist_ok=True)
+        zip_path = os.path.join(ffmpeg_dir, 'ffmpeg.zip')
+        
+        # Download
+        urllib.request.urlretrieve(ffmpeg_url, zip_path)
+        
+        # Extrair
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(ffmpeg_dir)
+        
+        # Encontrar e mover executáveis
+        for root, dirs, files in os.walk(ffmpeg_dir):
+            for f in files:
+                if f in ['ffmpeg.exe', 'ffprobe.exe']:
+                    src = os.path.join(root, f)
+                    dst = os.path.join(ffmpeg_dir, f)
+                    if src != dst:
+                        shutil.move(src, dst)
+        
+        # Limpar
+        os.remove(zip_path)
+        
+        # Adicionar ao PATH
+        os.environ['PATH'] = ffmpeg_dir + os.pathsep + os.environ.get('PATH', '')
+        logger.info("FFmpeg instalado com sucesso!")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Erro ao instalar FFmpeg: {e}")
+        return False
+
+# Verificar FFmpeg na inicialização
+FFMPEG_AVAILABLE = check_ffmpeg()
+if not FFMPEG_AVAILABLE:
+    logger.info("FFmpeg não encontrado. Tentando instalar automaticamente...")
+    FFMPEG_AVAILABLE = download_ffmpeg()
 
 # --- Classe Helper para Tooltips ---
 class Tooltip:
@@ -38,12 +156,12 @@ class Tooltip:
         try:
             if not self.widget.winfo_exists():
                 return
-        except:
+        except (tk.TclError, RuntimeError):
             return
             
         try:
             x, y, _, _ = self.widget.bbox("insert")
-        except:
+        except (tk.TclError, TypeError):
             x, y = 0, 0
         
         x = x + self.widget.winfo_rootx() + 25
@@ -70,7 +188,7 @@ class Tooltip:
             try:
                 if self.tooltip_window.winfo_exists():
                     self.tooltip_window.destroy()
-            except:
+            except (tk.TclError, RuntimeError):
                 pass
             self.tooltip_window = None
 
@@ -83,9 +201,90 @@ RULES_URL = "https://gist.githubusercontent.com/Davidwhs01/ce7dac0b2e6619e5cac9a
 PROMPT_URL = "https://gist.githubusercontent.com/Davidwhs01/b855b1965feaf5a79802e4ff4af3bad1/raw/master_prompt.txt"
 LOGO_URL = "https://i.imgur.com/SRKbEpf.png"
 
+# --- AUTO UPDATER ---
+CURRENT_VERSION = "1.4.0"
+GITHUB_REPO = "Davidwhs01/Stems-Organizer-PRO"
+
+class AutoUpdater:
+    @staticmethod
+    def check_for_updates():
+        try:
+            url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+            request = urllib.request.Request(url)
+            request.add_header('User-Agent', 'StemsOrganizerPro/1.0')
+            with urllib.request.urlopen(request, timeout=5) as response:
+                data = json.loads(response.read().decode('utf-8'))
+                latest_version = data.get('tag_name', '').replace('v', '')
+                if latest_version and latest_version != CURRENT_VERSION:
+                    return data
+        except Exception as e:
+            logger.error(f"Erro ao checar atualizações: {e}")
+        return None
+
+    @staticmethod
+    def download_and_install_update(release_data, parent_window):
+        assets = release_data.get('assets', [])
+        installer_url = None
+        for asset in assets:
+            if asset['name'].endswith('.exe') and 'setup' in asset['name'].lower():
+                installer_url = asset['browser_download_url']
+                break
+        
+        if not installer_url:
+            messagebox.showerror("Erro de Atualização", "O instalador não foi encontrado na release mais recente.")
+            return
+
+        download_win = ctk.CTkToplevel(parent_window)
+        download_win.title("Baixando Atualização")
+        download_win.geometry("400x150")
+        download_win.attributes('-topmost', True)
+        # Centralizar
+        download_win.update_idletasks()
+        x = (parent_window.winfo_screenwidth() // 2) - (400 // 2)
+        y = (parent_window.winfo_screenheight() // 2) - (150 // 2)
+        download_win.geometry(f"+{x}+{y}")
+        
+        label = ctk.CTkLabel(download_win, text="Baixando nova versão...", font=("", 14))
+        label.pack(pady=20)
+        
+        progress = ctk.CTkProgressBar(download_win, width=300)
+        progress.pack(pady=10)
+        progress.set(0)
+
+        def download_thread():
+            temp_installer = os.path.join(APP_DATA_PATH, "StemsOrganizerPro_Updater.exe")
+            try:
+                def report_progress(block_num, block_size, total_size):
+                    if total_size > 0:
+                        percent = min(1.0, (block_num * block_size) / total_size)
+                        download_win.after(10, lambda: progress.set(percent))
+                        
+                urllib.request.urlretrieve(installer_url, temp_installer, reporthook=report_progress)
+                
+                download_win.after(10, lambda: label.configure(text="Atualização baixada! Iniciando instalador..."))
+                time.sleep(1)
+                
+                # Execute installer and quit
+                subprocess.Popen([temp_installer, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"])
+                os._exit(0)
+            except Exception as e:
+                download_win.after(0, lambda: messagebox.showerror("Erro de Atualização", f"Falha ao baixar/instalar: {e}"))
+                download_win.after(0, download_win.destroy)
+
+        threading.Thread(target=download_thread, daemon=True).start()
+
+
 # --- CREDENCIAIS DO SUPABASE ---
-SUPABASE_URL = "https://mytywjgptinbgpapfpum.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im15dHl3amdwdGluYmdwYXBmcHVtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYwOTkxNzgsImV4cCI6MjA3MTY3NTE3OH0.9bShsivDy88f2wReb8ggnluk8iGnZ1eA5ALMP5lGCRQ"
+# IMPORTANTE: Use variáveis de ambiente para maior segurança
+# Defina SUPABASE_URL e SUPABASE_KEY no seu sistema
+SUPABASE_URL = os.environ.get(
+    'SUPABASE_URL', 
+    "https://mytywjgptinbgpapfpum.supabase.co"
+)
+SUPABASE_KEY = os.environ.get(
+    'SUPABASE_KEY',
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im15dHl3amdwdGluYmdwYXBmcHVtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYwOTkxNzgsImV4cCI6MjA3MTY3NTE3OH0.9bShsivDy88f2wReb8ggnluk8iGnZ1eA5ALMP5lGCRQ"
+)
 
 # --- PALETA DE CORES "PROD. AKI" ---
 COLOR_BACKGROUND = "#1c1c1e"
@@ -317,22 +516,58 @@ class App:
         self.logo_image = None
         self.logo_label = None
         self.logo_image_pil = None
+        self.logo_image_pil_full = None
+        
+        # Novas variáveis para melhorias
+        self.cancel_requested = False  # Para botão de cancelar
+        self.ia_cache = {}  # Cache de resultados da IA
+        self.undo_history = []  # Histórico para desfazer
+        self.processing_start_time = 0  # Para cálculo de ETA
+        self.files_processed = 0  # Contador para ETA
+        self.total_files_to_process = 0  # Total para ETA
 
         # Inicializar Supabase
         self.init_supabase()
         
         self.create_widgets()
         self.load_api_key()
+        
+        # Iniciar verificação de atualização em background
+        self.root.after(2000, self.check_updates_async)
+
+    def check_updates_async(self):
+        """Verifica por atualizações disponíveis sem travar a UI"""
+        def update_task():
+            release_data = AutoUpdater.check_for_updates()
+            if release_data:
+                version = release_data.get('tag_name', '')
+                self.root.after(0, lambda: self.prompt_update(version, release_data))
+        
+        threading.Thread(target=update_task, daemon=True).start()
+
+    def prompt_update(self, version, release_data):
+        """Mostra janela perguntando se o usuário quer atualizar"""
+        response = messagebox.askyesno(
+            "Atualização Disponível", 
+            f"Uma nova versão ({version}) está disponível no GitHub!\n\nDeseja baixar e instalar a atualização agora?"
+        )
+        if response:
+            AutoUpdater.download_and_install_update(release_data, self.root)
 
     def init_supabase(self):
         """Inicializa conexão com Supabase com tratamento de erro melhorado"""
+        if not SUPABASE_AVAILABLE:
+            logger.info("Supabase não disponível - funcionalidade de aprendizado desabilitada")
+            self.supabase = None
+            return
+            
         try:
             self.supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
             # Teste simples da conexão
             test_response = self.supabase.table('rule_suggestions').select('id').limit(1).execute()
-            print("DEBUG: Supabase connection successful.")
+            logger.info("Supabase connection successful.")
         except Exception as e:
-            print(f"DEBUG: Supabase connection failed - {e}")
+            logger.warning(f"Supabase connection failed - {e}")
             self.supabase = None
 
     def create_widgets(self):
@@ -473,6 +708,31 @@ class App:
         )
         # Botão aplicar inicialmente oculto
         # self.apply_button.grid_remove()
+        
+        # Botão Cancelar (oculto por padrão)
+        self.cancel_button = ctk.CTkButton(
+            self.controls_frame,
+            text="❌ Cancelar",
+            font=("", 14, "bold"),
+            fg_color=COLOR_ERROR,
+            hover_color="#d32f2f",
+            command=self.request_cancel,
+            width=120
+        )
+        # Inicialmente oculto
+        
+        # Botão Desfazer
+        self.undo_button = ctk.CTkButton(
+            self.controls_frame,
+            text="↩️ Desfazer",
+            font=("", 12),
+            fg_color=COLOR_WARNING,
+            hover_color="#FFA000",
+            text_color="#111111",
+            command=self.undo_last_action,
+            width=100
+        )
+        # Inicialmente oculto
 
         # Credits
         credits_label = ctk.CTkLabel(
@@ -484,35 +744,48 @@ class App:
         credits_label.grid(row=1, column=1, sticky="se", padx=15, pady=5)
 
     def load_logo(self, parent_frame):
-        """Carrega logo de forma mais robusta"""
-        logo_path = os.path.join(APP_DATA_PATH, "logo.png")
+        """Carrega logo de forma mais robusta com melhor qualidade"""
+        # Primeiro tentar logo local no diretório do projeto
+        project_logo = os.path.join(os.path.dirname(__file__), "logo2.png")
+        cache_logo = os.path.join(APP_DATA_PATH, "logo2.png")
+        
+        logo_size = 48  # Aumentado para melhor qualidade
         
         try:
-            # Tentar carregar logo local primeiro
-            if os.path.exists(logo_path):
-                self.logo_image_pil = Image.open(logo_path).resize((32, 32), Image.Resampling.LANCZOS)
+            # Priorizar logo local do projeto
+            if os.path.exists(project_logo):
+                original_image = Image.open(project_logo)
+                # Guardar imagem original para tela de boas-vindas
+                self.logo_image_pil_full = original_image.copy()
+                self.logo_image_pil = original_image.resize((logo_size, logo_size), Image.Resampling.LANCZOS)
+            elif os.path.exists(cache_logo):
+                original_image = Image.open(cache_logo)
+                self.logo_image_pil_full = original_image.copy()
+                self.logo_image_pil = original_image.resize((logo_size, logo_size), Image.Resampling.LANCZOS)
             else:
                 # Baixar logo se não existir
-                print("DEBUG: Baixando logo...")
+                logger.debug("Baixando logo...")
                 request = urllib.request.Request(LOGO_URL)
                 request.add_header('User-Agent', 'StemsOrganizerPro/1.0')
                 
                 with urllib.request.urlopen(request, timeout=10) as response:
                     image_data = response.read()
-                    self.logo_image_pil = Image.open(io.BytesIO(image_data)).resize((32, 32), Image.Resampling.LANCZOS)
+                    original_image = Image.open(io.BytesIO(image_data))
+                    self.logo_image_pil_full = original_image.copy()
+                    self.logo_image_pil = original_image.resize((logo_size, logo_size), Image.Resampling.LANCZOS)
                     
                     # Salvar localmente
-                    with open(logo_path, "wb") as f:
+                    with open(cache_logo, "wb") as f:
                         f.write(image_data)
 
             # Criar widget de logo
             if self.logo_image_pil:
-                self.logo_image = ctk.CTkImage(self.logo_image_pil, size=(32, 32))
+                self.logo_image = ctk.CTkImage(self.logo_image_pil, size=(logo_size, logo_size))
                 self.logo_label = ctk.CTkLabel(parent_frame, image=self.logo_image, text="")
                 self.logo_label.pack(side="left", padx=(0, 10))
                 
         except Exception as e:
-            print(f"DEBUG: Logo load failed - {e}")
+            logger.warning(f"Logo load failed - {e}")
 
     def show_welcome_screen(self):
         """Mostra tela de boas-vindas inicial"""
@@ -521,9 +794,10 @@ class App:
         welcome_frame = ctk.CTkFrame(self.visual_organizer_frame, fg_color="transparent")
         welcome_frame.pack(expand=True)
 
-        # Logo grande
-        if self.logo_image_pil:
-            large_logo = self.logo_image_pil.resize((128, 128), Image.Resampling.LANCZOS)
+        # Logo grande - usar versão em alta resolução
+        logo_source = getattr(self, 'logo_image_pil_full', None) or self.logo_image_pil
+        if logo_source:
+            large_logo = logo_source.resize((128, 128), Image.Resampling.LANCZOS)
             large_logo_ctk = ctk.CTkImage(large_logo, size=(128, 128))
             logo_label = ctk.CTkLabel(welcome_frame, image=large_logo_ctk, text="")
             logo_label.pack(pady=(50, 20))
@@ -875,13 +1149,20 @@ Categorias válidas: {valid_categories_list}
             return
 
         self.is_processing = True
+        self.cancel_requested = False  # Reset cancel flag
         self.planned_actions = []
         self.hide_apply_button()
+        
+        # Inicializar ETA
+        self.processing_start_time = time.time()
+        self.files_processed = 0
+        self.total_files_to_process = self.count_wav_files()
 
-        # Desabilitar controles
+        # Desabilitar controles e mostrar botão cancelar
         self.start_button.configure(state="disabled")
         self.browse_button.configure(state="disabled")
         self.analysis_mode_combo.configure(state="disabled")
+        self.show_cancel_button()
 
         # Inicializar feedback visual
         self.execution_feedback = ExecutionFeedback(self.visual_organizer_frame)
@@ -901,6 +1182,108 @@ Categorias válidas: {valid_categories_list}
             self.apply_button.grid(row=0, column=2, padx=(0, 0))
         except:
             pass
+
+    def show_cancel_button(self):
+        """Mostra o botão cancelar"""
+        try:
+            self.cancel_button.grid(row=0, column=3, padx=(10, 0))
+        except:
+            pass
+
+    def hide_cancel_button(self):
+        """Esconde o botão cancelar"""
+        try:
+            self.cancel_button.grid_remove()
+        except:
+            pass
+
+    def request_cancel(self):
+        """Solicita cancelamento do processamento"""
+        if self.is_processing:
+            self.cancel_requested = True
+            self.update_status("⏹️ Cancelando... Aguarde a conclusão da operação atual.", 0)
+            logger.info("Cancelamento solicitado pelo usuário")
+
+    def show_undo_button(self):
+        """Mostra o botão desfazer"""
+        try:
+            self.undo_button.grid(row=0, column=4, padx=(10, 0))
+        except:
+            pass
+
+    def hide_undo_button(self):
+        """Esconde o botão desfazer"""
+        try:
+            self.undo_button.grid_remove()
+        except:
+            pass
+
+    def undo_last_action(self):
+        """Desfaz a última organização aplicada"""
+        if not self.undo_history:
+            messagebox.showinfo("Info", "Nenhuma ação para desfazer.")
+            return
+        
+        last_actions = self.undo_history.pop()
+        
+        if messagebox.askyesno("Confirmar Desfazer", 
+                                f"Deseja desfazer {len(last_actions)} ações?"):
+            success_count = 0
+            error_count = 0
+            
+            for action in reversed(last_actions):
+                try:
+                    if action['type'] == 'move':
+                        # Mover de volta para origem
+                        if os.path.exists(action['destination']):
+                            shutil.move(action['destination'], action['source'])
+                            success_count += 1
+                    elif action['type'] == 'rename':
+                        # Renomear de volta
+                        if os.path.exists(action['new_path']):
+                            os.rename(action['new_path'], action['old_path'])
+                            success_count += 1
+                except Exception as e:
+                    logger.error(f"Erro ao desfazer: {e}")
+                    error_count += 1
+            
+            messagebox.showinfo("Desfazer Concluído", 
+                               f"✅ {success_count} ações desfeitas\n❌ {error_count} erros")
+            
+            if not self.undo_history:
+                self.hide_undo_button()
+
+    def calculate_eta(self):
+        """Calcula tempo estimado restante"""
+        if self.files_processed == 0 or self.total_files_to_process == 0:
+            return "Calculando..."
+        
+        elapsed = time.time() - self.processing_start_time
+        rate = self.files_processed / elapsed if elapsed > 0 else 0
+        remaining = self.total_files_to_process - self.files_processed
+        
+        if rate > 0:
+            eta_seconds = remaining / rate
+            if eta_seconds < 60:
+                return f"~{int(eta_seconds)}s restantes"
+            else:
+                mins, secs = divmod(int(eta_seconds), 60)
+                return f"~{mins}m {secs}s restantes"
+        return "Calculando..."
+
+    def get_cache_key(self, filename):
+        """Gera chave de cache para um arquivo"""
+        return hashlib.md5(filename.lower().encode()).hexdigest()
+
+    def get_cached_result(self, filename):
+        """Retorna resultado em cache se existir"""
+        key = self.get_cache_key(filename)
+        return self.ia_cache.get(key)
+
+    def cache_result(self, filename, category):
+        """Armazena resultado no cache"""
+        key = self.get_cache_key(filename)
+        self.ia_cache[key] = category
 
     def open_settings_window(self):
         """Janela de configurações melhorada"""
@@ -1148,8 +1531,13 @@ Categorias válidas: {valid_categories_list}
                         api_key = f.read().strip()
                     genai.configure(api_key=api_key)
                 except Exception as e:
-                    print(f"DEBUG: Erro ao configurar API: {e}")
+                    logger.error(f"Erro ao configurar API: {e}")
                     self.api_configured = False
+            
+            # Verificar cancelamento
+            if self.cancel_requested:
+                self.update_status("⛔ Análise cancelada pelo usuário.", 0)
+                return
 
             # Etapa 2: Coleta de arquivos
             self.execution_feedback.update_activity("Coletando arquivos .wav...")
@@ -1169,13 +1557,13 @@ Categorias válidas: {valid_categories_list}
                 self.update_status("Nenhum arquivo .wav encontrado.", 0)
                 return
 
-            print(f"DEBUG: Found {len(todos_os_arquivos)} .wav files")
+            logger.info(f"Encontrados {len(todos_os_arquivos)} arquivos .wav")
 
             # Etapa 3: Descobrir prefixo
             self.execution_feedback.update_activity("Analisando padrões de nomenclatura...")
             prefixo_sessao = self.descobrir_prefixo_recorrente(list(todos_os_arquivos.values()))
             if prefixo_sessao:
-                print(f"DEBUG: Found session prefix: {prefixo_sessao}")
+                logger.info(f"Prefixo de sessão encontrado: {prefixo_sessao}")
 
             candidatos_para_analise = {}
             total_files = len(todos_os_arquivos)
@@ -1184,24 +1572,42 @@ Categorias válidas: {valid_categories_list}
             self.execution_feedback.update_activity("Iniciando classificação local...")
             
             for i, (caminho, nome_original) in enumerate(todos_os_arquivos.items()):
+                # Verificar cancelamento
+                if self.cancel_requested:
+                    self.update_status("⛔ Análise cancelada pelo usuário.", 0)
+                    return
+                    
                 progress = 0.15 + ((i + 1) / total_files) * 0.4
+                self.files_processed = i + 1
+                
+                # Calcular ETA
+                eta = self.calculate_eta()
                 
                 # Atualizar feedback em tempo real
                 self.execution_feedback.update_activity(f"Processando: {nome_original}")
                 self.execution_feedback.update_stats('processed')
-                self.update_status(f"Processando localmente [{i+1}/{total_files}]: {nome_original}", progress)
+                self.update_status(f"[{i+1}/{total_files}] {nome_original} | {eta}", progress)
 
                 nome_limpo = nome_original.strip()
                 nome_final = nome_limpo[len(prefixo_sessao):].strip() if prefixo_sessao and nome_limpo.startswith(prefixo_sessao) else nome_limpo
 
-                # Verificar se deve descartar
+                # Verificar se deve descartar por padrão de nome
                 if self.should_discard_file(nome_limpo):
                     self.armazenar_acao('delete', caminho)
                     self.execution_feedback.add_file_entry(nome_original, "Descartados", "🗑️")
                     self.execution_feedback.update_stats('discarded')
                     continue
 
-                # Classificação local
+                # *** VERIFICAR SILÊNCIO PRIMEIRO - ANTES DA CLASSIFICAÇÃO ***
+                if verificar_silencio:
+                    if self.is_audio_insignificant(caminho, deep_check=verificacao_profunda):
+                        self.armazenar_acao('delete', caminho)
+                        self.execution_feedback.add_file_entry(nome_original, "Silencioso", "🔇")
+                        self.execution_feedback.update_stats('discarded')
+                        logger.info(f"Arquivo silencioso descartado: {nome_original}")
+                        continue
+
+                # Classificação local (só se não foi descartado por silêncio)
                 categoria_encontrada = self.classify_locally(nome_final)
                 if categoria_encontrada:
                     self.mover_arquivo(caminho, nome_final, categoria_encontrada, pasta_raiz, is_dry_run=True)
@@ -1214,28 +1620,9 @@ Categorias válidas: {valid_categories_list}
                 if i % 10 == 0:
                     time.sleep(0.01)
 
-            # Etapa 5: Análise de áudio
-            candidatos_para_ia = {}
-            if verificar_silencio and candidatos_para_analise:
-                self.execution_feedback.update_activity("Analisando arquivos de áudio...")
-                total_analise = len(candidatos_para_analise)
-
-                for i, (nome, caminho) in enumerate(candidatos_para_analise.items()):
-                    progress = 0.55 + ((i + 1) / total_analise) * 0.15
-                    self.execution_feedback.update_activity(f"Analisando áudio: {nome}")
-                    self.update_status(f"Analisando áudio [{i+1}/{total_analise}]: {nome}", progress)
-
-                    if self.is_audio_insignificant(caminho, deep_check=verificacao_profunda):
-                        self.armazenar_acao('delete', caminho)
-                        self.execution_feedback.add_file_entry(nome, "Descartados", "🔇")
-                        self.execution_feedback.update_stats('discarded')
-                    else:
-                        candidatos_para_ia[nome] = caminho
-
-                    if i % 5 == 0:
-                        time.sleep(0.01)
-            else:
-                candidatos_para_ia = candidatos_para_analise
+            # A verificação de silêncio já foi feita na Etapa 4 para TODOS os arquivos
+            # Os candidatos restantes são apenas os que não são silenciosos
+            candidatos_para_ia = candidatos_para_analise
 
             # Etapa 6: Classificação com IA
             if candidatos_para_ia and self.api_configured:
@@ -1292,6 +1679,7 @@ Categorias válidas: {valid_categories_list}
 
         finally:
             self.is_processing = False
+            self.root.after(0, self.hide_cancel_button)
             self.root.after(0, self.enable_controls)
 
     def should_discard_file(self, filename):
@@ -1330,125 +1718,187 @@ Categorias válidas: {valid_categories_list}
             pass
 
     def show_final_report(self):
-        """Mostra relatório final melhorado"""
+        """Mostra relatório final com design moderno"""
         self.clear_frame(self.visual_organizer_frame)
 
         report_frame = ctk.CTkFrame(self.visual_organizer_frame, fg_color="transparent")
-        report_frame.pack(fill="both", expand=True)
-        report_frame.grid_columnconfigure(1, weight=1)
+        report_frame.pack(fill="both", expand=True, padx=20, pady=10)
+        report_frame.grid_columnconfigure(0, weight=1)
+        report_frame.grid_columnconfigure(1, weight=2)
         report_frame.grid_rowconfigure(0, weight=1)
-
-        # Painel de resumo
-        summary_panel = ctk.CTkFrame(report_frame, fg_color=COLOR_FRAME, width=300)
-        summary_panel.grid(row=0, column=0, sticky="ns", padx=(0, 15), pady=5)
-        summary_panel.pack_propagate(False)
-
-        ctk.CTkLabel(
-            summary_panel,
-            text="📊 Resumo da Análise",
-            font=("", 18, "bold"),
-            text_color=COLOR_ACCENT_CYAN
-        ).pack(pady=(20, 15))
 
         # Contadores de ações
         move_count = len([a for a in self.planned_actions if a['action'] == 'move'])
         delete_count = len([a for a in self.planned_actions if a['action'] == 'delete'])
         rename_count = len([a for a in self.planned_actions if a['action'] == 'rename'])
+        total_count = len(self.planned_actions)
 
+        # ============= PAINEL DE RESUMO (ESQUERDA) =============
+        summary_panel = ctk.CTkFrame(report_frame, fg_color=COLOR_FRAME, corner_radius=15, width=280)
+        summary_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 15), pady=0)
+        summary_panel.pack_propagate(False)
+
+        # Título do resumo
+        title_frame = ctk.CTkFrame(summary_panel, fg_color=COLOR_ACCENT_CYAN, corner_radius=10)
+        title_frame.pack(fill="x", padx=15, pady=(15, 20))
+        
+        ctk.CTkLabel(
+            title_frame,
+            text="📊 Resumo",
+            font=("", 18, "bold"),
+            text_color=COLOR_BACKGROUND
+        ).pack(pady=12)
+
+        # Cards de estatísticas
         stats_items = [
-            ("🎵 Arquivos a mover", move_count, COLOR_SUCCESS),
-            ("🗑️ Arquivos a descartar", delete_count, COLOR_ERROR),
-            ("📝 Arquivos a renomear", rename_count, COLOR_WARNING)
+            ("🎵 Mover", move_count, COLOR_SUCCESS, "#2E7D32"),
+            ("🗑️ Descartar", delete_count, COLOR_ERROR, "#C62828"),
+            ("📝 Renomear", rename_count, COLOR_WARNING, "#F57C00")
         ]
 
-        for label, count, color in stats_items:
-            stat_frame = ctk.CTkFrame(summary_panel, fg_color=COLOR_BACKGROUND)
-            stat_frame.pack(fill="x", padx=15, pady=5)
-
-            ctk.CTkLabel(stat_frame, text=label, anchor="w").pack(side="left", padx=10, pady=8)
+        for label, count, color, hover_color in stats_items:
+            card = ctk.CTkFrame(summary_panel, fg_color=COLOR_BACKGROUND, corner_radius=10)
+            card.pack(fill="x", padx=15, pady=8)
+            
+            # Layout horizontal
+            inner_frame = ctk.CTkFrame(card, fg_color="transparent")
+            inner_frame.pack(fill="x", padx=15, pady=12)
+            
             ctk.CTkLabel(
-                stat_frame, 
+                inner_frame, 
+                text=label, 
+                font=("", 14),
+                text_color=COLOR_TEXT,
+                anchor="w"
+            ).pack(side="left")
+            
+            # Badge com número
+            badge = ctk.CTkLabel(
+                inner_frame, 
                 text=str(count), 
-                font=("", 14, "bold"),
-                text_color=color
-            ).pack(side="right", padx=10, pady=8)
+                font=("", 16, "bold"),
+                text_color="#FFFFFF",
+                fg_color=color,
+                corner_radius=8,
+                width=50,
+                height=32
+            )
+            badge.pack(side="right")
 
-        # Lista de ações detalhada
-        actions_panel = ctk.CTkFrame(report_frame, fg_color=COLOR_FRAME)
-        actions_panel.grid(row=0, column=1, sticky="nsew", padx=(0, 0), pady=5)
-
+        # Total
+        total_frame = ctk.CTkFrame(summary_panel, fg_color=COLOR_ACCENT_PURPLE, corner_radius=10)
+        total_frame.pack(fill="x", padx=15, pady=(20, 15))
+        
+        total_inner = ctk.CTkFrame(total_frame, fg_color="transparent")
+        total_inner.pack(fill="x", padx=15, pady=12)
+        
         ctk.CTkLabel(
-            actions_panel,
+            total_inner,
+            text="Total de Ações",
+            font=("", 14, "bold"),
+            text_color="#FFFFFF"
+        ).pack(side="left")
+        
+        ctk.CTkLabel(
+            total_inner,
+            text=str(total_count),
+            font=("", 20, "bold"),
+            text_color="#FFFFFF"
+        ).pack(side="right")
+
+        # ============= PAINEL DE AÇÕES (DIREITA) =============
+        actions_panel = ctk.CTkFrame(report_frame, fg_color=COLOR_FRAME, corner_radius=15)
+        actions_panel.grid(row=0, column=1, sticky="nsew", pady=0)
+
+        # Título das ações
+        actions_title = ctk.CTkFrame(actions_panel, fg_color=COLOR_ACCENT_PURPLE, corner_radius=10)
+        actions_title.pack(fill="x", padx=15, pady=(15, 15))
+        
+        ctk.CTkLabel(
+            actions_title,
             text="📋 Ações Planejadas",
             font=("", 18, "bold"),
-            text_color=COLOR_ACCENT_CYAN
-        ).pack(pady=(20, 15))
+            text_color="#FFFFFF"
+        ).pack(pady=12)
 
         # Frame scrollável para ações
-        actions_scroll = ctk.CTkScrollableFrame(actions_panel, fg_color=COLOR_BACKGROUND)
-        actions_scroll.pack(fill="both", expand=True, padx=20, pady=(0, 20))
+        actions_scroll = ctk.CTkScrollableFrame(
+            actions_panel, 
+            fg_color="transparent",
+            scrollbar_button_color=COLOR_ACCENT_PURPLE,
+            scrollbar_button_hover_color=COLOR_BUTTON_HOVER
+        )
+        actions_scroll.pack(fill="both", expand=True, padx=15, pady=(0, 15))
 
         if not self.planned_actions:
-            no_actions_label = ctk.CTkLabel(
-                actions_scroll,
-                text="Nenhuma ação necessária.\nTodos os arquivos já estão organizados!",
-                font=("", 14),
-                text_color="#888888"
-            )
-            no_actions_label.pack(pady=50)
+            empty_frame = ctk.CTkFrame(actions_scroll, fg_color=COLOR_BACKGROUND, corner_radius=10)
+            empty_frame.pack(fill="x", pady=20, padx=10)
+            
+            ctk.CTkLabel(
+                empty_frame,
+                text="✨ Tudo organizado!\nNenhuma ação necessária.",
+                font=("", 16),
+                text_color=COLOR_SUCCESS
+            ).pack(pady=40)
         else:
             # Agrupar ações por tipo
-            actions_by_type = {}
-            for action in self.planned_actions:
-                action_type = action['action']
-                if action_type not in actions_by_type:
-                    actions_by_type[action_type] = []
-                actions_by_type[action_type].append(action)
+            type_config = {
+                'move': ("📁 Arquivos a mover", COLOR_SUCCESS, "➡️"),
+                'delete': ("🗑️ Arquivos a descartar", COLOR_ERROR, "✖️"),
+                'rename': ("📝 Arquivos a renomear", COLOR_WARNING, "✏️")
+            }
 
-            for action_type, actions in actions_by_type.items():
+            for action_type, (title, color, icon) in type_config.items():
+                actions_of_type = [a for a in self.planned_actions if a['action'] == action_type]
+                if not actions_of_type:
+                    continue
+
                 # Cabeçalho do grupo
-                if action_type == 'move':
-                    group_title = "📁 Arquivos a serem movidos"
-                    icon = "➡️"
-                elif action_type == 'delete':
-                    group_title = "🗑️ Arquivos a serem descartados"
-                    icon = "❌"
-                else:
-                    group_title = "📝 Arquivos a serem renomeados"
-                    icon = "✏️"
-
-                group_frame = ctk.CTkFrame(actions_scroll, fg_color=COLOR_FRAME)
-                group_frame.pack(fill="x", pady=(10, 5))
-
+                group_header = ctk.CTkFrame(actions_scroll, fg_color=color, corner_radius=8)
+                group_header.pack(fill="x", pady=(10, 5), padx=5)
+                
                 ctk.CTkLabel(
-                    group_frame,
-                    text=group_title,
-                    font=("", 14, "bold"),
-                    text_color=COLOR_ACCENT_PURPLE
-                ).pack(pady=10)
+                    group_header,
+                    text=f"{title} ({len(actions_of_type)})",
+                    font=("", 13, "bold"),
+                    text_color="#FFFFFF"
+                ).pack(pady=8, padx=10, anchor="w")
 
-                # Listar ações do grupo
-                for action in actions:
-                    action_frame = ctk.CTkFrame(actions_scroll, fg_color="#1a1a1c")
-                    action_frame.pack(fill="x", padx=5, pady=2)
+                # Listar ações
+                for action in actions_of_type[:15]:  # Limitar a 15 por tipo
+                    action_frame = ctk.CTkFrame(actions_scroll, fg_color=COLOR_BACKGROUND, corner_radius=6)
+                    action_frame.pack(fill="x", padx=10, pady=2)
+                    
+                    inner = ctk.CTkFrame(action_frame, fg_color="transparent")
+                    inner.pack(fill="x", padx=10, pady=8)
 
                     # Icon
-                    ctk.CTkLabel(action_frame, text=icon, width=30).pack(side="left", padx=5)
+                    ctk.CTkLabel(inner, text=icon, font=("", 14)).pack(side="left", padx=(0, 10))
 
-                    # Detalhes da ação
+                    # Detalhes
                     if action_type == 'move':
-                        detail_text = f"{action['source_name']} → {action['category']}/{action['target_name']}"
+                        detail_text = f"{action['source_name']} → {action['category']}"
                     elif action_type == 'delete':
-                        detail_text = f"Descartar: {os.path.basename(action['source_path'])}"
+                        detail_text = os.path.basename(action['source_path'])
                     else:
                         detail_text = f"{os.path.basename(action['source_path'])} → {action['target_name']}"
 
                     ctk.CTkLabel(
-                        action_frame,
+                        inner,
                         text=detail_text,
-                        anchor="w",
-                        font=("", 12)
-                    ).pack(side="left", fill="x", expand=True, padx=10, pady=8)
+                        font=("", 12),
+                        text_color=COLOR_TEXT,
+                        anchor="w"
+                    ).pack(side="left", fill="x", expand=True)
+
+                # Se há mais ações
+                if len(actions_of_type) > 15:
+                    ctk.CTkLabel(
+                        actions_scroll,
+                        text=f"... e mais {len(actions_of_type) - 15} arquivos",
+                        font=("", 11),
+                        text_color="#888888"
+                    ).pack(pady=5)
 
     def start_apply_thread(self):
         """Inicia aplicação das mudanças em thread separada"""
@@ -1479,6 +1929,8 @@ Categorias válidas: {valid_categories_list}
 
     def apply_planned_actions(self):
         """Aplica as ações planejadas com feedback visual"""
+        undo_batch = []  # Registrar ações para desfazer
+        
         try:
             # Inicializar feedback para aplicação
             self.execution_feedback = ExecutionFeedback(self.visual_organizer_frame)
@@ -1496,6 +1948,11 @@ Categorias válidas: {valid_categories_list}
                         self.execution_feedback.update_activity(f"Movendo: {action['source_name']}")
                         self.update_status(f"Movendo [{i+1}/{len(self.planned_actions)}]: {action['source_name']}", progress)
                         
+                        # Calcular destino antes de mover
+                        pasta_pai = self.PARENT_FOLDER_MAP.get(action['category'], "Outros")
+                        categoria_path = os.path.join(self.folder_path_full, pasta_pai, action['category'])
+                        destino = os.path.join(categoria_path, action['target_name'])
+                        
                         # Executar movimento real
                         self.mover_arquivo(
                             action['source_path'], 
@@ -1504,6 +1961,13 @@ Categorias válidas: {valid_categories_list}
                             self.folder_path_full, 
                             is_dry_run=False
                         )
+                        
+                        # Registrar para undo
+                        undo_batch.append({
+                            'type': 'move',
+                            'source': action['source_path'],
+                            'destination': destino
+                        })
                         
                         self.execution_feedback.add_file_entry(action['target_name'], action['category'], "✅")
                         
@@ -1518,6 +1982,13 @@ Categorias válidas: {valid_categories_list}
                         target_path = os.path.join(discarded_folder, filename)
                         shutil.move(action['source_path'], target_path)
                         
+                        # Registrar para undo
+                        undo_batch.append({
+                            'type': 'move',
+                            'source': action['source_path'],
+                            'destination': target_path
+                        })
+                        
                         self.execution_feedback.add_file_entry(filename, "Descartados", "🗑️")
                         
                     elif action['action'] == 'rename':
@@ -1525,12 +1996,23 @@ Categorias válidas: {valid_categories_list}
                         self.execution_feedback.update_activity(f"Renomeando: {old_name}")
                         self.update_status(f"Renomeando [{i+1}/{len(self.planned_actions)}]: {old_name}", progress)
                         
+                        # Calcular novo caminho
+                        pasta_pai = os.path.dirname(action['source_path'])
+                        new_path = os.path.join(pasta_pai, action['target_name'])
+                        
                         # Executar renomeação real
                         self.renomear_arquivo_no_local(
                             action['source_path'], 
                             action['target_name'], 
                             is_dry_run=False
                         )
+                        
+                        # Registrar para undo
+                        undo_batch.append({
+                            'type': 'rename',
+                            'old_path': action['source_path'],
+                            'new_path': new_path
+                        })
                         
                         self.execution_feedback.add_file_entry(action['target_name'], "Renomeados", "📝")
 
@@ -1541,11 +2023,16 @@ Categorias válidas: {valid_categories_list}
                     error_count += 1
                     error_msg = f"Erro ao processar {action.get('source_name', 'arquivo')}: {e}"
                     errors.append(error_msg)
-                    print(f"DEBUG: {error_msg}")
+                    logger.error(error_msg)
                     self.execution_feedback.update_stats('discarded')
 
                 # Pequena pausa
                 time.sleep(0.05)
+
+            # Salvar histórico para undo se houve sucesso
+            if undo_batch:
+                self.undo_history.append(undo_batch)
+                self.root.after(0, self.show_undo_button)
 
             # Finalizar
             final_message = f"Aplicação concluída!\n✅ {success_count} sucessos"
@@ -1563,7 +2050,7 @@ Categorias válidas: {valid_categories_list}
             error_msg = f"Erro durante aplicação: {str(e)}"
             self.update_status(error_msg, 0)
             self.root.after(0, lambda: messagebox.showerror("Erro", error_msg))
-            print(f"DEBUG: {error_msg}")
+            logger.error(error_msg)
 
         finally:
             self.is_processing = False
@@ -1696,41 +2183,95 @@ Categorias válidas: {valid_categories_list}
         return ""
 
     def is_audio_insignificant(self, arquivo_path, deep_check=False):
-        """Verifica se arquivo de áudio é insignificante (silencioso/vazio)"""
-        try:
-            audio = AudioSegment.from_wav(arquivo_path)
+        """Verifica se arquivo de áudio é insignificante usando FFmpeg volumedetect"""
+        if not FFMPEG_AVAILABLE:
+            logger.warning("FFmpeg não disponível - pulando verificação de silêncio")
+            return False
             
-            # Verificação básica - RMS médio
-            rms = audio.rms
-            if rms < 100:  # Limite para considerar silencioso
+        try:
+            # Usar FFmpeg volumedetect (mesmo método do BAT que funciona)
+            result = subprocess.run(
+                ['ffmpeg', '-i', arquivo_path, '-af', 'volumedetect', '-f', 'null', 'NUL'],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            output = result.stderr  # FFmpeg output vai para stderr
+            
+            # Procurar max_volume na saída
+            max_volume = None
+            for line in output.split('\n'):
+                if 'max_volume' in line:
+                    # Extrair valor: "max_volume: -inf dB" ou "max_volume: -45.2 dB"
+                    try:
+                        # Formato: [Parsed_volumedetect_0 @ ...] max_volume: -inf dB
+                        if '-inf' in line:
+                            max_volume = float('-inf')
+                        else:
+                            # Extrair número antes de " dB"
+                            import re
+                            match = re.search(r'max_volume:\s*([-\d.]+)\s*dB', line)
+                            if match:
+                                max_volume = float(match.group(1))
+                    except ValueError:
+                        continue
+            
+            if max_volume is None:
+                logger.debug(f"Não foi possível detectar volume de: {arquivo_path}")
+                return False
+            
+            # Verificar se é silencioso (-inf ou <= -91 dB como no BAT)
+            if max_volume == float('-inf'):
+                logger.info(f"🔇 Silêncio total detectado (-inf dB): {os.path.basename(arquivo_path)}")
                 return True
-
-            # Verificação profunda se solicitada
-            if deep_check:
-                # Verificar picos
-                raw_data = audio.get_array_of_samples()
-                if raw_data:
-                    max_amplitude = max(abs(x) for x in raw_data)
-                    if max_amplitude < 1000:  # Limite para picos muito baixos
-                        return True
-
+            
+            if max_volume <= -91:
+                logger.info(f"🔇 Arquivo muito silencioso ({max_volume:.1f} dB): {os.path.basename(arquivo_path)}")
+                return True
+            
+            # Verificação adicional para análise profunda
+            if deep_check and max_volume <= -60:
+                logger.info(f"🔇 Arquivo silencioso em análise profunda ({max_volume:.1f} dB): {os.path.basename(arquivo_path)}")
+                return True
+                
             return False
 
-        except (CouldntDecodeError, FileNotFoundError, Exception) as e:
-            print(f"DEBUG: Erro ao analisar áudio {arquivo_path}: {e}")
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Timeout ao analisar áudio: {arquivo_path}")
+            return False
+        except Exception as e:
+            logger.debug(f"Erro ao analisar áudio {arquivo_path}: {e}")
             return False
 
+    @retry_on_failure(max_retries=3, delay=1.0, backoff=2.0)
     def classificar_com_ia_mestre(self, lista_arquivos):
         """Classifica arquivos usando IA com prompt mestre otimizado"""
         if not lista_arquivos or not self.api_configured:
             return {}
 
+        # Verificar cache primeiro
+        cached_results = {}
+        files_to_classify = []
+        
+        for arquivo in lista_arquivos:
+            cached = self.get_cached_result(arquivo)
+            if cached:
+                cached_results[arquivo] = cached
+                logger.debug(f"Cache hit para: {arquivo}")
+            else:
+                files_to_classify.append(arquivo)
+        
+        # Se todos estão em cache, retornar
+        if not files_to_classify:
+            return cached_results
+
         try:
             # Preparar lista de categorias válidas
             valid_categories = list(self.LOCAL_CLASSIFICATION_RULES.keys()) + ["Outros"]
             
-            # Preparar prompt
-            files_str = "\n".join([f"- {arquivo}" for arquivo in lista_arquivos])
+            # Preparar prompt apenas para arquivos não em cache
+            files_str = "\n".join([f"- {arquivo}" for arquivo in files_to_classify])
             
             prompt = self.master_prompt.format(
                 file_list=files_str,
@@ -1748,42 +2289,57 @@ Categorias válidas: {valid_categories_list}
             )
 
             if not response or not response.text:
-                print("DEBUG: Resposta vazia da IA")
+                logger.debug("Resposta vazia da IA")
                 return {}
 
-            # Parse do JSON
+            # Parse do JSON - mais robusto
             response_text = response.text.strip()
             
-            # Limpar resposta (remover markdown se presente)
-            if response_text.startswith('```json'):
-                response_text = response_text[7:]
-            if response_text.endswith('```'):
-                response_text = response_text[:-3]
+            # Limpar resposta (remover markdown se presente) - suporta múltiplos formatos
+            # Remove ```json, ```JSON, ``` no início
+            response_text = re.sub(r'^```(?:json|JSON)?\s*\n?', '', response_text)
+            # Remove ``` no final
+            response_text = re.sub(r'\n?```\s*$', '', response_text)
             
             response_text = response_text.strip()
             
-            # Parse JSON
-            result = json.loads(response_text)
+            # Tentar extrair JSON com regex se parse direto falhar
+            try:
+                result = json.loads(response_text)
+            except json.JSONDecodeError:
+                # Tentar encontrar JSON no texto usando regex
+                json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', response_text)
+                if json_match:
+                    result = json.loads(json_match.group())
+                else:
+                    logger.debug(f"Não foi possível extrair JSON da resposta: {response_text[:200]}")
+                    return {}
             
-            # Validar resultado
+            # Validar resultado e armazenar no cache
             validated_result = {}
             for arquivo, categoria in result.items():
                 if categoria in valid_categories:
                     validated_result[arquivo] = categoria
+                    # Armazenar no cache
+                    self.cache_result(arquivo, categoria)
                 else:
-                    print(f"DEBUG: Categoria inválida '{categoria}' para arquivo '{arquivo}'")
+                    logger.debug(f"Categoria inválida '{categoria}' para arquivo '{arquivo}'")
                     validated_result[arquivo] = "Outros"
+                    self.cache_result(arquivo, "Outros")
 
-            print(f"DEBUG: IA classificou {len(validated_result)} arquivos")
+            logger.info(f"IA classificou {len(validated_result)} arquivos (cache: {len(cached_results)})")
+            
+            # Mesclar com resultados em cache
+            validated_result.update(cached_results)
             return validated_result
 
         except json.JSONDecodeError as e:
-            print(f"DEBUG: Erro ao fazer parse do JSON da IA: {e}")
-            print(f"DEBUG: Resposta da IA: {response.text if response else 'None'}")
-            return {}
+            logger.error(f"Erro ao fazer parse do JSON da IA: {e}")
+            logger.debug(f"Resposta da IA: {response.text if response else 'None'}")
+            return cached_results  # Retornar ao menos os resultados em cache
         except Exception as e:
-            print(f"DEBUG: Erro geral na classificação por IA: {e}")
-            return {}
+            logger.error(f"Erro geral na classificação por IA: {e}")
+            raise  # Re-raise para o retry decorator
 
     def mover_arquivo(self, caminho_origem, nome_novo, categoria, pasta_raiz, is_dry_run=True):
         """Move arquivo para categoria apropriada"""
