@@ -5,7 +5,7 @@ Constantes, caminhos, credenciais, paleta de cores.
 import os
 
 # --- VERSÃO E REPOSITÓRIO ---
-CURRENT_VERSION = "1.5.1"
+CURRENT_VERSION = "1.5.2"
 GITHUB_REPO = "Davidwhs01/Stems-Organizer-PRO"
 
 # --- CAMINHOS ---
