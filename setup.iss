@@ -30,4 +30,4 @@ Name: "{group}\{cm:UninstallProgram,Stems Organizer PRO}"; Filename: "{uninstall
 Name: "{autodesktop}\Stems Organizer PRO"; Filename: "{app}\Stems Organizer PRO.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\Stems Organizer PRO.exe"; Description: "{cm:LaunchProgram,Stems Organizer PRO}"; Flags: nowait postinstall
+Filename: "{app}\Stems Organizer PRO.exe"; Description: "{cm:LaunchProgram,Stems Organizer PRO}"; WorkingDir: "{app}"; Flags: nowait postinstall runasoriginaluser shellexec

@@ -124,11 +124,6 @@ class App:
         
         # Aplicar efeitos Premium Nativos do Windows 11 (Dark Titlebar + Cantos Arredondados)
         enable_native_windows_effects(self.root)
-
-        # Animação de Entrada Start Fade-In (0% -> 100%)
-        self.root.attributes("-alpha", 0.0)
-        self.fade_in_alpha = 0.0
-        self.animate_window_fade_in()
         
         # Tentar Auto-Login
         if not self.auth.attempt_auto_login():
@@ -368,15 +363,6 @@ class App:
 
         # Inicializar no Organizar
         self.navigate_to("organize")
-
-    def animate_window_fade_in(self):
-        """Inicia a UI de forma suave, aumentando a opacidade aos poucos (Premium feel)"""
-        self.fade_in_alpha += 0.05
-        if self.fade_in_alpha <= 1.0:
-            self.root.attributes("-alpha", self.fade_in_alpha)
-            self.root.after(15, self.animate_window_fade_in)
-        else:
-            self.root.attributes("-alpha", 1.0)
             
     def navigate_to(self, page):
         """Navega para uma página da sidebar com transição"""
@@ -1125,6 +1111,7 @@ class App:
 
                     success_count += 1
                     self.execution_feedback.update_stats('classified')
+                    self.execution_feedback.update_global_progress(i + 1, len(self.planned_actions))
 
                 except Exception as e:
                     error_count += 1
@@ -1132,6 +1119,7 @@ class App:
                     errors.append(error_msg)
                     logger.error(error_msg)
                     self.execution_feedback.update_stats('discarded')
+                    self.execution_feedback.update_global_progress(i + 1, len(self.planned_actions))
 
                 # Pequena pausa
                 time.sleep(0.05)
