@@ -142,7 +142,7 @@ class AutoUpdater:
                 parent_window.after(10, lambda: pct_label.configure(text="Iniciando instalador..."))
                 time.sleep(1)
 
-                # Estratégia .old
+                # Obter o caminho do executável instalado para reiniciar
                 if getattr(sys, 'frozen', False):
                     current_exe = sys.executable
                     old_exe = current_exe + '.old'
@@ -153,9 +153,45 @@ class AutoUpdater:
                         logger.info(f"Renomeado {current_exe} -> {old_exe}")
                     except Exception as e:
                         logger.warning(f"Não foi possível renomear exe: {e}")
+                    
+                    # Criar script .bat que: espera o instalador terminar -> abre o app -> se auto-deleta
+                    restart_bat = os.path.join(APP_DATA_PATH, "_restart.bat")
+                    # Obter o caminho de instalação padrão do Inno Setup
+                    install_dir = os.path.dirname(current_exe)
+                    app_exe = os.path.join(install_dir, 'Stems Organizer PRO.exe')
+                    
+                    bat_content = f'''@echo off
+title Stems Organizer PRO - Atualizando...
+echo Aguardando instalador finalizar...
+:wait_loop
+tasklist /FI "IMAGENAME eq StemsOrganizerPro_Updater.exe" 2>NUL | find /I "StemsOrganizerPro_Updater.exe" >NUL
+if %ERRORLEVEL%==0 (
+    timeout /t 2 /nobreak >NUL
+    goto wait_loop
+)
+echo Instalacao concluida! Reabrindo o aplicativo...
+timeout /t 2 /nobreak >NUL
+start "" "{app_exe}"
+timeout /t 1 /nobreak >NUL
+del "%~f0"
+'''
+                    with open(restart_bat, 'w', encoding='utf-8') as f:
+                        f.write(bat_content)
+                    
+                    logger.info(f"Script de reinício criado em: {restart_bat}")
+                else:
+                    restart_bat = None
 
                 creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
                 subprocess.Popen([temp_installer, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], creationflags=creationflags)
+                
+                # Lançar o script de reinício (ele vai esperar o instalador terminar)
+                if restart_bat and os.path.exists(restart_bat):
+                    subprocess.Popen(
+                        ['cmd', '/c', restart_bat],
+                        creationflags=creationflags
+                    )
+                
                 os._exit(0)
             except Exception as e:
                 parent_window.after(0, lambda: overlay.destroy())
