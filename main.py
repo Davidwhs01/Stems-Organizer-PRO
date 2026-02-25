@@ -45,7 +45,7 @@ import io
 
 # --- Importar módulos refatorados ---
 from stems_organizer_pro.config import *
-from stems_organizer_pro.utils import retry_on_failure, check_ffmpeg, download_ffmpeg, init_ffmpeg, Tooltip
+from stems_organizer_pro.utils import retry_on_failure, check_ffmpeg, download_ffmpeg, init_ffmpeg, Tooltip, enable_native_windows_effects
 from stems_organizer_pro.history import SessionHistory
 from stems_organizer_pro.notifications import ToastNotification
 from stems_organizer_pro.feedback import ExecutionFeedback
@@ -121,6 +121,14 @@ class App:
         self.auth = AuthManager(self.supabase)
         
         self.create_widgets()
+        
+        # Aplicar efeitos Premium Nativos do Windows 11 (Dark Titlebar + Cantos Arredondados)
+        enable_native_windows_effects(self.root)
+
+        # Animação de Entrada Start Fade-In (0% -> 100%)
+        self.root.attributes("-alpha", 0.0)
+        self.fade_in_alpha = 0.0
+        self.animate_window_fade_in()
         
         # Tentar Auto-Login
         if not self.auth.attempt_auto_login():
@@ -361,6 +369,15 @@ class App:
         # Inicializar no Organizar
         self.navigate_to("organize")
 
+    def animate_window_fade_in(self):
+        """Inicia a UI de forma suave, aumentando a opacidade aos poucos (Premium feel)"""
+        self.fade_in_alpha += 0.05
+        if self.fade_in_alpha <= 1.0:
+            self.root.attributes("-alpha", self.fade_in_alpha)
+            self.root.after(15, self.animate_window_fade_in)
+        else:
+            self.root.attributes("-alpha", 1.0)
+            
     def navigate_to(self, page):
         """Navega para uma página da sidebar com transição"""
         self.current_page = page

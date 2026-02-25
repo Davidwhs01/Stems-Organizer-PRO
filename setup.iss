@@ -1,6 +1,6 @@
 [Setup]
 AppName=Stems Organizer PRO
-AppVersion=1.7.4
+AppVersion=1.7.5
 AppPublisher=Prod. Aki
 AppPublisherURL=https://github.com/Davidwhs01/Stems-Organizer-PRO
 DefaultDirName={autopf}\Stems Organizer PRO
@@ -30,4 +30,4 @@ Name: "{group}\{cm:UninstallProgram,Stems Organizer PRO}"; Filename: "{uninstall
 Name: "{autodesktop}\Stems Organizer PRO"; Filename: "{app}\Stems Organizer PRO.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\Stems Organizer PRO.exe"; Description: "{cm:LaunchProgram,Stems Organizer PRO}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\Stems Organizer PRO.exe"; Description: "{cm:LaunchProgram,Stems Organizer PRO}"; Flags: nowait postinstall

@@ -17,6 +17,42 @@ import tkinter as tk
 
 logger = logging.getLogger(__name__)
 
+def enable_native_windows_effects(window):
+    """
+    Ativa os efeitos nativos do Windows 11 na janela Tkinter:
+    Dark Mode na barra de títulos e cantos arredondados.
+    """
+    if os.name != 'nt':
+        return
+
+    try:
+        import ctypes
+        window.update()  # Garante que a janela já possui HWND
+        hwnd = ctypes.windll.user32.GetParent(window.winfo_id())
+
+        # Constantes DWM (Desktop Window Manager) API do Windows 11
+        DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+        DWMWA_WINDOW_CORNER_PREFERENCE = 33
+        DWMWCP_ROUND = 2  # Arredondamento padrão Windows 11
+
+        # Ativar Dark Mode (Title Bar)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_USE_IMMERSIVE_DARK_MODE,
+            ctypes.byref(ctypes.c_int(1)),
+            ctypes.sizeof(ctypes.c_int(1))
+        )
+
+        # Forçar cantos arredondados premium
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            ctypes.byref(ctypes.c_int(DWMWCP_ROUND)),
+            ctypes.sizeof(ctypes.c_int(DWMWCP_ROUND))
+        )
+    except Exception as e:
+        logger.warning(f"Não foi possível aplicar efeitos DWM do Windows: {e}")
+
 
 # --- DECORATOR PARA RETRY AUTOMÁTICO ---
 def retry_on_failure(max_retries=3, delay=1.0, backoff=2.0):
@@ -49,7 +85,8 @@ def check_ffmpeg():
         os.environ['PATH'] = ffmpeg_dir + os.pathsep + os.environ.get('PATH', '')
 
     try:
-        result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True)
+        creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+        result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True, creationflags=creationflags)
         return result.returncode == 0
     except FileNotFoundError:
         return False

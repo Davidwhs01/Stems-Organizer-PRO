@@ -183,7 +183,13 @@ Categorias válidas: {valid_categories_list}
             return False
             
         try:
-            res = subprocess.run(['ffmpeg', '-i', filepath, '-af', 'volumedetect', '-f', 'null', 'NUL'], capture_output=True, text=True, timeout=30)
+            # Configurar flag para ocultar terminal do FFmpeg no Windows
+            creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            
+            res = subprocess.run(
+                ['ffmpeg', '-i', filepath, '-af', 'volumedetect', '-f', 'null', 'NUL'], 
+                capture_output=True, text=True, timeout=30, creationflags=creationflags
+            )
             out = res.stderr
             max_volume = None
             for line in out.split('\\n'):

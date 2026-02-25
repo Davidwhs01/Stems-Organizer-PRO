@@ -154,7 +154,8 @@ class AutoUpdater:
                     except Exception as e:
                         logger.warning(f"Não foi possível renomear exe: {e}")
 
-                subprocess.Popen([temp_installer, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"])
+                creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                subprocess.Popen([temp_installer, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], creationflags=creationflags)
                 os._exit(0)
             except Exception as e:
                 parent_window.after(0, lambda: overlay.destroy())
