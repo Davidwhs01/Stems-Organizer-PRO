@@ -440,7 +440,8 @@ def show_review_screen(app, ai_results):
         'file_widgets': {},
         'selected_cat': None,
         'tab_buttons': {},
-        'counts': {cat: 0 for cat in all_categories}
+        'counts': {cat: 0 for cat in all_categories},
+        'undo_stack': []  # Stack de mudanças: [{'nome': str, 'de': str, 'para': str}]
     }
 
     # Contagem inicial
@@ -479,13 +480,14 @@ def show_review_screen(app, ai_results):
     total_label.pack(side="left", padx=(15, 0), pady=8)
 
     # Botão Confirmar no header
-    ctk.CTkButton(
+    confirm_btn = ctk.CTkButton(
         header_inner, text="Confirmar",
         font=FONT_BUTTON, height=32, width=120,
         fg_color=COLOR_SUCCESS, hover_color="#059669",
         text_color="white", corner_radius=8,
         command=lambda: app.processar_resultados_revisados(review_state['files'])
-    ).pack(side="right", pady=8)
+    )
+    confirm_btn.pack(side="right", pady=8)
 
     # ============= SIDEBAR DE CATEGORIAS (ESQUERDA) =============
     sidebar = ctk.CTkFrame(review_frame, fg_color=COLOR_FRAME, corner_radius=10, width=220)
@@ -568,16 +570,15 @@ def show_review_screen(app, ai_results):
             return
 
         for nome, dados in files_in_cat:
-            row = ctk.CTkFrame(files_scroll, fg_color=COLOR_BACKGROUND, corner_radius=6, height=36)
+            row = ctk.CTkFrame(files_scroll, fg_color=COLOR_BACKGROUND, corner_radius=6)
             row.pack(fill="x", padx=6, pady=1)
-            row.pack_propagate(False)
 
             # Nome do arquivo (truncado)
             disp_name = nome if len(nome) <= 45 else nome[:42] + "..."
             ctk.CTkLabel(
                 row, text=disp_name,
                 font=FONT_CAPTION, text_color=COLOR_TEXT, anchor="w"
-            ).pack(side="left", padx=(10, 5), fill="x", expand=True)
+            ).pack(side="left", padx=(10, 5), pady=6, fill="x", expand=True)
 
             # ComboBox para mover
             combo = ctk.CTkComboBox(
@@ -597,15 +598,46 @@ def show_review_screen(app, ai_results):
         if antiga_cat == nova_cat:
             return
 
+        # Salvar no undo stack
+        review_state['undo_stack'].append({'nome': nome, 'de': antiga_cat, 'para': nova_cat})
+
         review_state['files'][nome]['categoria'] = nova_cat
         review_state['files'][nome]['foi_alterado'] = True
         review_state['counts'][antiga_cat] -= 1
         review_state['counts'][nova_cat] += 1
 
+        # Toast rápido
+        short_name = nome if len(nome) <= 30 else nome[:27] + "..."
+        ToastNotification(app.root, f"{short_name} \u2192 {nova_cat}", "info", duration=1500)
+
         # Atualiza tabs
         rebuild_tabs()
 
         # Re-seleciona a categoria atual
+        current = review_state['selected_cat']
+        if current:
+            select_category(current)
+
+    def undo_review_change():
+        """Desfaz a última mudança de categoria no preview"""
+        if not review_state['undo_stack']:
+            ToastNotification(app.root, "Nada para desfazer.", "info", duration=1200)
+            return
+
+        last = review_state['undo_stack'].pop()
+        nome = last['nome']
+        cat_antiga = last['de']
+        cat_nova = last['para']
+
+        # Reverter
+        review_state['files'][nome]['categoria'] = cat_antiga
+        review_state['counts'][cat_nova] -= 1
+        review_state['counts'][cat_antiga] += 1
+
+        short_name = nome if len(nome) <= 30 else nome[:27] + "..."
+        ToastNotification(app.root, f"Revertendo {short_name} \u2192 {cat_antiga}", "warning", duration=1500)
+
+        rebuild_tabs()
         current = review_state['selected_cat']
         if current:
             select_category(current)
@@ -647,6 +679,24 @@ def show_review_screen(app, ai_results):
             count_badge.place(relx=1.0, rely=0.5, anchor="e", x=-8)
 
             review_state['tab_buttons'][cat] = btn
+
+    # ============= CONTROLES DO FOOTER =============
+    # Esconder Aplicar (redundante com Confirmar) e rewire Desfazer
+    app.apply_button.grid_remove()
+    
+    # Salvar referência original do undo e rewire
+    original_undo_command = app.undo_button.cget('command')
+    app.undo_button.configure(command=undo_review_change)
+    app.undo_button.grid(row=0, column=4, padx=(5, 0))
+
+    def on_confirm():
+        # Restaurar botões originais
+        app.undo_button.configure(command=original_undo_command)
+        app.undo_button.grid_remove()
+        app.processar_resultados_revisados(review_state['files'])
+
+    # Rewire o botão Confirmar do header
+    confirm_btn.configure(command=on_confirm)
 
     # ============= INICIALIZAÇÃO =============
     rebuild_tabs()
