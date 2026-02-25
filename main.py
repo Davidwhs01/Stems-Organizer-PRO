@@ -72,6 +72,17 @@ class App:
         self.root.title("Stems Organizer Pro by Prod. Aki")
         self.root.geometry("1200x850")
         self.root.minsize(1000, 650)
+        
+        # Obter o caminho base que funciona nativo ou compilado via PyInstaller
+        base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+        
+        # Configurar ícone da janela
+        try:
+            icon_path = os.path.join(base_path, 'logo2.ico')
+            if os.path.exists(icon_path):
+                self.root.iconbitmap(icon_path)
+        except Exception as e:
+            logger.warning(f"Erro ao carregar ícone da janela: {e}")
 
         ctk.set_appearance_mode("Dark")
         self.root.configure(fg_color=COLOR_BACKGROUND)
@@ -364,7 +375,7 @@ class App:
         # Roteamento de páginas
         self.pages = {
             "organize": self.show_welcome_screen,
-            "history": lambda: self.session_history.show_history_view(self),
+            "history": self.show_history_screen,
             "settings": self.show_settings_screen
         }
         

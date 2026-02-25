@@ -1,6 +1,6 @@
 [Setup]
 AppName=Stems Organizer PRO
-AppVersion=1.7.3
+AppVersion=1.7.4
 AppPublisher=Prod. Aki
 AppPublisherURL=https://github.com/Davidwhs01/Stems-Organizer-PRO
 DefaultDirName={autopf}\Stems Organizer PRO
@@ -8,7 +8,7 @@ DefaultGroupName=Stems Organizer PRO
 AllowNoIcons=yes
 OutputDir=Output
 OutputBaseFilename=StemsOrganizerPRO_Setup
-SetupIconFile=logo.ico
+SetupIconFile=logo2.ico
 Compression=lzma
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64
