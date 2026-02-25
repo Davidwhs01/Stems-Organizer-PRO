@@ -6,7 +6,8 @@ import customtkinter as ctk
 from .config import (
     COLOR_TEXT, COLOR_TEXT_DIM,
     COLOR_SUCCESS, COLOR_ERROR, COLOR_WARNING,
-    COLOR_ACCENT_PURPLE, COLOR_ACCENT_CYAN
+    COLOR_ACCENT_PURPLE, COLOR_ACCENT_CYAN,
+    FONT_BODY, FONT_BODY_BOLD, FONT_CAPTION, FONT_BUTTON
 )
 
 
@@ -20,11 +21,11 @@ class ToastNotification:
         self._destroyed = False
 
         configs = {
-            "success": {"icon": "✅", "bg": "#064e3b", "border": COLOR_SUCCESS, "accent": COLOR_SUCCESS},
-            "error":   {"icon": "❌", "bg": "#450a0a", "border": COLOR_ERROR, "accent": COLOR_ERROR},
-            "warning": {"icon": "⚠️", "bg": "#451a03", "border": COLOR_WARNING, "accent": COLOR_WARNING},
-            "update":  {"icon": "🔄", "bg": "#1e1b4b", "border": COLOR_ACCENT_PURPLE, "accent": COLOR_ACCENT_PURPLE},
-            "info":    {"icon": "ℹ️", "bg": "#0c1929", "border": COLOR_ACCENT_CYAN, "accent": COLOR_ACCENT_CYAN}
+            "success": {"icon": "✓", "bg": "#064e3b", "border": COLOR_SUCCESS, "accent": COLOR_SUCCESS},
+            "error":   {"icon": "✕", "bg": "#450a0a", "border": COLOR_ERROR, "accent": COLOR_ERROR},
+            "warning": {"icon": "!", "bg": "#451a03", "border": COLOR_WARNING, "accent": COLOR_WARNING},
+            "update":  {"icon": "↻", "bg": "#1e1b4b", "border": COLOR_ACCENT_PURPLE, "accent": COLOR_ACCENT_PURPLE},
+            "info":    {"icon": "i", "bg": "#0c1929", "border": COLOR_ACCENT_CYAN, "accent": COLOR_ACCENT_CYAN}
         }
         cfg = configs.get(toast_type, configs["info"])
 
@@ -49,22 +50,22 @@ class ToastNotification:
         content = ctk.CTkFrame(self.toast_frame, fg_color="transparent")
         content.pack(fill="both", expand=True, padx=12, pady=8)
 
-        ctk.CTkLabel(content, text=cfg["icon"], font=("", 18), width=30).pack(side="left", padx=(0, 8))
+        ctk.CTkLabel(content, text=cfg["icon"], font=("Segoe UI Semibold", 16, "bold"), width=30, text_color=cfg["accent"]).pack(side="left", padx=(0, 8))
 
         ctk.CTkLabel(
-            content, text=message, font=("", 13), text_color=COLOR_TEXT,
+            content, text=message, font=FONT_BODY, text_color=COLOR_TEXT,
             anchor="w", wraplength=250
         ).pack(side="left", fill="x", expand=True)
 
         if action_text and action_callback:
             ctk.CTkButton(
-                content, text=action_text, font=("", 12, "bold"), width=90, height=28,
-                fg_color=cfg["accent"], hover_color=cfg["border"],
+                content, text=action_text, font=FONT_BUTTON, width=90, height=28,
+                fg_color=cfg["accent"], hover_color=cfg["border"], corner_radius=8,
                 command=lambda: [action_callback(), self.dismiss()]
             ).pack(side="right", padx=(8, 0))
 
         ctk.CTkButton(
-            content, text="✕", width=24, height=24, font=("", 11),
+            content, text="✕", width=24, height=24, font=FONT_CAPTION,
             fg_color="transparent", hover_color="#374151", text_color=COLOR_TEXT_DIM,
             command=self.dismiss
         ).pack(side="right")

@@ -8,7 +8,11 @@ from stems_organizer_pro.config import (
     COLOR_BACKGROUND, COLOR_FRAME, COLOR_ACCENT_CYAN, 
     COLOR_ACCENT_PURPLE, COLOR_TEXT, COLOR_TEXT_DIM, 
     COLOR_CARD, COLOR_BORDER, COLOR_BUTTON_HOVER, COLOR_SUCCESS, 
-    COLOR_WARNING, COLOR_ERROR, CURRENT_VERSION, APP_DATA_PATH, CONFIG_FILE
+    COLOR_WARNING, COLOR_ERROR, CURRENT_VERSION, APP_DATA_PATH, CONFIG_FILE,
+    COLOR_SURFACE, COLOR_SIDEBAR,
+    FONT_HERO, FONT_TITLE, FONT_SUBTITLE, FONT_BODY, FONT_BODY_BOLD,
+    FONT_CAPTION, FONT_CAPTION_DIM, FONT_BUTTON, FONT_NAV, FONT_BRAND,
+    FONT_CODE, FONT_FAMILY, FONT_FAMILY_SEMIBOLD
 )
 from stems_organizer_pro.notifications import ToastNotification
 from stems_organizer_pro.history import SessionHistory
@@ -176,7 +180,7 @@ def handle_logout(app):
     app.navigate_to('login')
 
 def show_welcome_screen(app):
-    """Mostra tela de boas-vindas animada"""
+    """Mostra tela de boas-vindas com design premium"""
     app.clear_frame(app.visual_organizer_frame)
 
     welcome_frame = ctk.CTkFrame(app.visual_organizer_frame, fg_color="transparent")
@@ -191,37 +195,36 @@ def show_welcome_screen(app):
         large_logo_ctk = ctk.CTkImage(large_logo, size=(w, h))
         logo_label = ctk.CTkLabel(welcome_frame, image=large_logo_ctk, text="")
         logo_label.pack(pady=(30, 15))
-        # Efeito pulsante no logo
         _pulse_widget(app, logo_label)
 
     # Título com animação de digitação
     title_text = "Stems Organizer Pro"
     welcome_title = ctk.CTkLabel(
-        welcome_frame, text="", font=("", 32, "bold"), text_color=COLOR_ACCENT_CYAN
+        welcome_frame, text="", font=FONT_HERO, text_color=COLOR_ACCENT_CYAN
     )
     welcome_title.pack(pady=(0, 5))
     _type_animation(app, welcome_title, title_text)
 
     # Linha de gradiente animada
-    gradient_line = ctk.CTkFrame(welcome_frame, fg_color=COLOR_ACCENT_PURPLE, height=3, width=200, corner_radius=2)
+    gradient_line = ctk.CTkFrame(welcome_frame, fg_color=COLOR_ACCENT_PURPLE, height=2, width=200, corner_radius=2)
     gradient_line.pack(pady=(0, 8))
 
     # Subtítulo
     subtitle = ctk.CTkLabel(
         welcome_frame, text="Organize seus stems de música automaticamente com IA",
-        font=("", 15), text_color=COLOR_TEXT_DIM
+        font=FONT_SUBTITLE, text_color=COLOR_TEXT_DIM
     )
-    subtitle.pack(pady=(0, 25))
+    subtitle.pack(pady=(0, 30))
 
-    # Feature cards com fade-in escalonado
+    # Feature cards com design premium
     cards_frame = ctk.CTkFrame(welcome_frame, fg_color="transparent")
     cards_frame.pack(padx=20, pady=10)
 
     features = [
-        ("🤖", "IA Inteligente", "Classificação automática com Gemini"),
-        ("⚡", "Super Rápido", "Processamento paralelo de stems"),
-        ("🔊", "Análise de Áudio", "Detecção de silêncio com FFmpeg"),
-        ("↩️", "Desfazer", "Reverta qualquer organização")
+        ("AI",  "IA Inteligente",    "Classificação automática com Gemini"),
+        ("//",  "Super Rápido",      "Processamento paralelo de stems"),
+        ("))",  "Análise de Áudio",  "Detecção de silêncio com FFmpeg"),
+        ("<-",  "Desfazer",          "Reverta qualquer organização")
     ]
 
     for i, (icon, title, desc) in enumerate(features):
@@ -229,9 +232,16 @@ def show_welcome_screen(app):
         card.grid(row=0, column=i, padx=8, pady=5)
         card.pack_propagate(False)
 
-        ctk.CTkLabel(card, text=icon, font=("", 28)).pack(pady=(15, 5))
-        ctk.CTkLabel(card, text=title, font=("", 13, "bold"), text_color=COLOR_TEXT).pack(pady=(0, 3))
-        ctk.CTkLabel(card, text=desc, font=("", 10), text_color=COLOR_TEXT_DIM, wraplength=150).pack()
+        # Ícone estilizado em vez de emoji
+        icon_label = ctk.CTkLabel(
+            card, text=icon, 
+            font=(FONT_FAMILY_SEMIBOLD, 22, "bold"), 
+            text_color=COLOR_ACCENT_PURPLE
+        )
+        icon_label.pack(pady=(18, 5))
+
+        ctk.CTkLabel(card, text=title, font=FONT_BODY_BOLD, text_color=COLOR_TEXT).pack(pady=(0, 3))
+        ctk.CTkLabel(card, text=desc, font=FONT_CAPTION_DIM, text_color=COLOR_TEXT_DIM, wraplength=150).pack()
 
         # Fade-in escalonado
         card.grid_remove()
@@ -239,11 +249,11 @@ def show_welcome_screen(app):
 
     # Instrução de ação
     action_frame = ctk.CTkFrame(welcome_frame, fg_color="transparent")
-    action_frame.pack(pady=(25, 10))
+    action_frame.pack(pady=(30, 10))
 
     ctk.CTkLabel(
-        action_frame, text="📂  Selecione uma pasta ou arraste para começar",
-        font=("", 14), text_color=COLOR_TEXT_DIM
+        action_frame, text="Selecione uma pasta ou arraste para começar",
+        font=FONT_SUBTITLE, text_color=COLOR_TEXT_DIM
     ).pack()
 
 def _type_animation(app, label, full_text, index=0):

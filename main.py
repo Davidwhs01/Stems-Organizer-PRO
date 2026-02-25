@@ -232,31 +232,42 @@ class App:
         brand_frame.pack(fill="x", padx=15, pady=(20, 5))
         self.load_logo(brand_frame)
         
-        brand_label = ctk.CTkLabel(brand_frame, text="Stems Organizer", font=("", 16, "bold"), text_color=COLOR_TEXT)
+        brand_label = ctk.CTkLabel(brand_frame, text="Stems Organizer", font=FONT_BRAND, text_color=COLOR_TEXT)
         brand_label.pack(side="left")
         
-        version_label = ctk.CTkLabel(sidebar, text=f"PRO v{CURRENT_VERSION}", font=("", 11), text_color=COLOR_TEXT_DIM)
+        version_label = ctk.CTkLabel(sidebar, text=f"PRO v{CURRENT_VERSION}", font=FONT_CAPTION_DIM, text_color=COLOR_TEXT_DIM)
         version_label.pack(anchor="w", padx=20, pady=(0, 20))
 
         # Separator
         sep = ctk.CTkFrame(sidebar, fg_color=COLOR_BORDER, height=1)
         sep.pack(fill="x", padx=15, pady=(0, 15))
 
-        # Navigation buttons
+        # Navigation buttons — clean text, no emojis
         nav_items = [
-            ("organize",  "📂  Organizar",    lambda: self.navigate_to("organize")),
-            ("history",   "📊  Histórico",    lambda: self.navigate_to("history")),
-            ("settings",  "⚙️  Configurações", lambda: self.navigate_to("settings")),
+            ("organize",  "Organizar",      lambda: self.navigate_to("organize")),
+            ("history",   "Histórico",      lambda: self.navigate_to("history")),
+            ("settings",  "Configurações",  lambda: self.navigate_to("settings")),
         ]
 
+        self.nav_indicators = {}  # Active indicator bars
         for key, label, cmd in nav_items:
+            # Container for indicator + button
+            nav_row = ctk.CTkFrame(sidebar, fg_color="transparent", height=42)
+            nav_row.pack(fill="x", padx=6, pady=1)
+            nav_row.pack_propagate(False)
+
+            # Active indicator bar (left edge)
+            indicator = ctk.CTkFrame(nav_row, fg_color="transparent", width=3, corner_radius=2)
+            indicator.pack(side="left", fill="y", padx=(0, 0))
+            self.nav_indicators[key] = indicator
+
             btn = ctk.CTkButton(
-                sidebar, text=label, font=("", 14), anchor="w",
+                nav_row, text=label, font=FONT_NAV, anchor="w",
                 fg_color="transparent", hover_color=COLOR_SIDEBAR_ACTIVE,
-                text_color=COLOR_TEXT, height=42, corner_radius=8,
+                text_color=COLOR_TEXT_DIM, height=42, corner_radius=8,
                 command=cmd
             )
-            btn.pack(fill="x", padx=10, pady=2)
+            btn.pack(side="left", fill="both", expand=True, padx=(4, 4))
             self.sidebar_buttons[key] = btn
 
         # Spacer
@@ -267,12 +278,12 @@ class App:
         shortcuts_frame = ctk.CTkFrame(sidebar, fg_color=COLOR_SURFACE, corner_radius=8)
         shortcuts_frame.pack(fill="x", padx=10, pady=(0, 10))
         
-        ctk.CTkLabel(shortcuts_frame, text="⌨️ Atalhos", font=("", 11, "bold"), text_color=COLOR_TEXT_DIM).pack(anchor="w", padx=10, pady=(8, 2))
+        ctk.CTkLabel(shortcuts_frame, text="Atalhos", font=FONT_CAPTION, text_color=COLOR_TEXT_DIM).pack(anchor="w", padx=10, pady=(8, 2))
         shortcuts_text = "Ctrl+O  Abrir pasta\nCtrl+⏎  Analisar\nCtrl+Z  Desfazer\nEsc     Cancelar"
-        ctk.CTkLabel(shortcuts_frame, text=shortcuts_text, font=("Consolas", 10), text_color=COLOR_TEXT_DIM, justify="left").pack(anchor="w", padx=10, pady=(0, 8))
+        ctk.CTkLabel(shortcuts_frame, text=shortcuts_text, font=FONT_CODE, text_color=COLOR_TEXT_DIM, justify="left").pack(anchor="w", padx=10, pady=(0, 8))
 
         # Credits
-        ctk.CTkLabel(sidebar, text="Made by Prod. Aki", text_color="#555555", font=("", 10)).pack(pady=(0, 15))
+        ctk.CTkLabel(sidebar, text="by Prod. Aki", text_color="#444444", font=FONT_CAPTION_DIM).pack(pady=(0, 15))
 
         # ═══════════════════════ MAIN AREA ═══════════════════════
         main_container = ctk.CTkFrame(self.root, fg_color=COLOR_BACKGROUND, corner_radius=0)
@@ -296,7 +307,7 @@ class App:
         progress_frame.grid(row=0, column=0, sticky="ew", padx=15, pady=10)
         progress_frame.grid_columnconfigure(0, weight=1)
 
-        self.status_label = ctk.CTkLabel(progress_frame, text="Pronto para iniciar.", text_color=COLOR_TEXT, anchor="w", font=("", 12))
+        self.status_label = ctk.CTkLabel(progress_frame, text="Pronto para iniciar.", text_color=COLOR_TEXT, anchor="w", font=FONT_BODY)
         self.status_label.grid(row=0, column=0, sticky="ew")
 
         self.progress_bar = ctk.CTkProgressBar(progress_frame, mode="determinate", progress_color=COLOR_ACCENT_PURPLE, height=6)
@@ -310,55 +321,57 @@ class App:
         # Folder path entry (inline in controls)
         self.folder_path_entry = ctk.CTkEntry(
             self.controls_frame, placeholder_text="Nenhuma pasta selecionada...",
-            state="readonly", width=280, height=32, font=("", 11),
-            fg_color=COLOR_SURFACE, border_color=COLOR_BORDER
+            state="readonly", width=280, height=34, font=FONT_BODY,
+            fg_color=COLOR_SURFACE, border_color=COLOR_BORDER, corner_radius=10
         )
         self.folder_path_entry.grid(row=0, column=0, padx=(0, 8))
 
         self.browse_button = ctk.CTkButton(
-            self.controls_frame, text="📂 Abrir", width=80, height=32,
-            fg_color=COLOR_ACCENT_CYAN, hover_color="#0891b2", text_color="#0d0d0e",
-            font=("", 12, "bold"), command=self.browse_folder
+            self.controls_frame, text="Abrir", width=80, height=34,
+            fg_color=COLOR_ACCENT_CYAN, hover_color="#0891b2", text_color="#0a0a0b",
+            font=FONT_BUTTON, command=self.browse_folder, corner_radius=10
         )
         self.browse_button.grid(row=0, column=1, padx=(0, 8))
 
         self.clear_button = ctk.CTkButton(
-            self.controls_frame, text="✖", width=32, height=32,
+            self.controls_frame, text="\u2715", width=34, height=34,
             fg_color=COLOR_ERROR, hover_color="#c62828", text_color="white",
-            font=("", 14, "bold"), command=self.clear_folder_selection
+            font=FONT_BUTTON, command=self.clear_folder_selection, corner_radius=10
         )
 
         analysis_options = ["Análise Rápida (Padrão)", "Análise Profunda (Lenta)", "Nenhuma Análise (Mais Rápido)"]
         self.analysis_mode_combo = ctk.CTkComboBox(
-            self.controls_frame, values=analysis_options, width=180, height=32,
+            self.controls_frame, values=analysis_options, width=190, height=34,
             button_color=COLOR_ACCENT_PURPLE, border_color=COLOR_BORDER,
-            dropdown_hover_color=COLOR_BUTTON_HOVER, state="readonly", font=("", 11)
+            dropdown_hover_color=COLOR_BUTTON_HOVER, state="readonly", font=FONT_BODY,
+            corner_radius=10
         )
         self.analysis_mode_combo.set(analysis_options[0])
         self.analysis_mode_combo.grid(row=0, column=2, padx=(0, 8))
 
         self.start_button = ctk.CTkButton(
-            self.controls_frame, text="⚡ Analisar", font=("", 13, "bold"), width=110, height=32,
+            self.controls_frame, text="Analisar", font=FONT_BUTTON, width=110, height=34,
             fg_color=COLOR_ACCENT_PURPLE, hover_color=COLOR_BUTTON_HOVER,
-            command=self.start_organization_thread, state="disabled"
+            command=self.start_organization_thread, state="disabled", corner_radius=10
         )
         self.start_button.grid(row=0, column=3, padx=(0, 5))
 
         self.apply_button = ctk.CTkButton(
-            self.controls_frame, text="✅ Aplicar", font=("", 13, "bold"), width=110, height=32,
+            self.controls_frame, text="Aplicar", font=FONT_BUTTON, width=110, height=34,
             fg_color=COLOR_SUCCESS, hover_color="#059669", text_color="#ffffff",
-            command=self.start_apply_thread
+            command=self.start_apply_thread, corner_radius=10
         )
 
         self.cancel_button = ctk.CTkButton(
-            self.controls_frame, text="❌ Cancelar", font=("", 13, "bold"), width=110, height=32,
-            fg_color=COLOR_ERROR, hover_color="#dc2626", command=self.request_cancel
+            self.controls_frame, text="Cancelar", font=FONT_BUTTON, width=110, height=34,
+            fg_color=COLOR_ERROR, hover_color="#dc2626", corner_radius=10,
+            command=self.request_cancel
         )
 
         self.undo_button = ctk.CTkButton(
-            self.controls_frame, text="↩️ Desfazer", font=("", 12), width=100, height=32,
-            fg_color=COLOR_WARNING, hover_color="#d97706", text_color="#0d0d0e",
-            command=self.undo_last_action
+            self.controls_frame, text="Desfazer", font=FONT_BUTTON, width=100, height=34,
+            fg_color=COLOR_WARNING, hover_color="#d97706", text_color="#0a0a0b",
+            command=self.undo_last_action, corner_radius=10
         )
 
         # Inicializar no Organizar
@@ -368,12 +381,17 @@ class App:
         """Navega para uma página da sidebar com transição"""
         self.current_page = page
         
-        # Atualizar visual dos botões da sidebar
+        # Atualizar visual dos botões e indicadores da sidebar
         for key, btn in self.sidebar_buttons.items():
+            indicator = self.nav_indicators.get(key)
             if key == page:
                 btn.configure(fg_color=COLOR_SIDEBAR_ACTIVE, text_color=COLOR_ACCENT_CYAN)
+                if indicator:
+                    indicator.configure(fg_color=COLOR_ACCENT_CYAN)
             else:
-                btn.configure(fg_color="transparent", text_color=COLOR_TEXT)
+                btn.configure(fg_color="transparent", text_color=COLOR_TEXT_DIM)
+                if indicator:
+                    indicator.configure(fg_color="transparent")
         
         # Roteamento de páginas
         self.pages = {
