@@ -137,60 +137,45 @@ class AutoUpdater:
 
                 urllib.request.urlretrieve(installer_url, temp_installer, reporthook=report_progress)
 
-                parent_window.after(10, lambda: title_label.configure(text="Atualização baixada!"))
-                parent_window.after(10, lambda: icon_label.configure(text="✅"))
-                parent_window.after(10, lambda: pct_label.configure(text="Iniciando instalador..."))
+                parent_window.after(10, lambda: title_label.configure(text="Instalando..."))
+                parent_window.after(10, lambda: icon_label.configure(text=""))
+                parent_window.after(10, lambda: pct_label.configure(text="Fechando e atualizando..."))
                 time.sleep(1)
 
-                # Obter o caminho do executável instalado para reiniciar
+                # Estratégia simples: lançar o installer e fechar o app
+                # O Inno Setup já sabe sobrescrever os arquivos e reiniciar
                 if getattr(sys, 'frozen', False):
-                    current_exe = sys.executable
-                    old_exe = current_exe + '.old'
-                    try:
-                        if os.path.exists(old_exe):
-                            os.remove(old_exe)
-                        os.rename(current_exe, old_exe)
-                        logger.info(f"Renomeado {current_exe} -> {old_exe}")
-                    except Exception as e:
-                        logger.warning(f"Não foi possível renomear exe: {e}")
-                    
-                    # Criar script .bat que: espera o instalador terminar -> abre o app -> se auto-deleta
-                    restart_bat = os.path.join(APP_DATA_PATH, "_restart.bat")
-                    # Obter o caminho de instalação padrão do Inno Setup
-                    install_dir = os.path.dirname(current_exe)
+                    install_dir = os.path.dirname(sys.executable)
                     app_exe = os.path.join(install_dir, 'Stems Organizer PRO.exe')
                     
+                    # Script .bat que: fecha o app -> roda o installer -> reabre
+                    restart_bat = os.path.join(APP_DATA_PATH, "_restart.bat")
                     bat_content = f'''@echo off
 title Stems Organizer PRO - Atualizando...
-echo Aguardando instalador finalizar...
-:wait_loop
-tasklist /FI "IMAGENAME eq StemsOrganizerPro_Updater.exe" 2>NUL | find /I "StemsOrganizerPro_Updater.exe" >NUL
-if %ERRORLEVEL%==0 (
-    timeout /t 2 /nobreak >NUL
-    goto wait_loop
-)
-echo Instalacao concluida! Reabrindo o aplicativo...
+echo Fechando o aplicativo...
+taskkill /F /IM "Stems Organizer PRO.exe" >NUL 2>&1
+timeout /t 2 /nobreak >NUL
+echo Executando instalador...
+start /wait "" "{temp_installer}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="{install_dir}"
+echo Instalacao concluida! Reabrindo...
 timeout /t 2 /nobreak >NUL
 start "" "{app_exe}"
 timeout /t 1 /nobreak >NUL
+del "{temp_installer}" >NUL 2>&1
 del "%~f0"
 '''
                     with open(restart_bat, 'w', encoding='utf-8') as f:
                         f.write(bat_content)
                     
-                    logger.info(f"Script de reinício criado em: {restart_bat}")
-                else:
-                    restart_bat = None
-
-                creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-                subprocess.Popen([temp_installer, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], creationflags=creationflags)
-                
-                # Lançar o script de reinício (ele vai esperar o instalador terminar)
-                if restart_bat and os.path.exists(restart_bat):
+                    # Lançar o bat e sair imediatamente
+                    creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
                     subprocess.Popen(
                         ['cmd', '/c', restart_bat],
                         creationflags=creationflags
                     )
+                else:
+                    # Dev mode: apenas abre o installer
+                    subprocess.Popen([temp_installer])
                 
                 os._exit(0)
             except Exception as e:
