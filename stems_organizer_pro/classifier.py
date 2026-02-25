@@ -23,7 +23,6 @@ class AudioClassifier:
         self.supabase = supabase_client
         self.ffmpeg_available = ffmpeg_available
         self.ia_cache = {}
-        self.PARENT_FOLDER_MAP = {}
         self.LOCAL_CLASSIFICATION_RULES = {}
         self.master_prompt = ""
 
@@ -34,27 +33,81 @@ class AudioClassifier:
             request.add_header('User-Agent', 'StemsOrganizerPro/1.0')
             with urllib.request.urlopen(request, timeout=15) as response:
                 data = json.loads(response.read().decode('utf-8'))
-                self.PARENT_FOLDER_MAP = data.get("parent_folder_map", {})
                 self.LOCAL_CLASSIFICATION_RULES = data.get("local_classification_rules", {})
                 logger.debug(f"Loaded {len(self.LOCAL_CLASSIFICATION_RULES)} rule categories")
         except Exception as e:
             logger.debug(f"Rules loading failed - {e}. Using fallback.")
-            self.PARENT_FOLDER_MAP = {
-                "Drums": "Rhythm", "Bass": "Rhythm", "Perc": "Rhythm",
-                "GTRs": "Harmony", "Piano": "Harmony", "Synth": "Harmony", "Pad": "Harmony",
-                "Vocal": "Melody", "Orchestra": "Melody", "Fx": "Effects"
-            }
             self.LOCAL_CLASSIFICATION_RULES = {
-                "Drums": ["drum", "kick", "snare", "hat", "hihat", "cymbal", "tom", "perc"],
-                "Bass": ["bass", "sub", "low", "808"],
-                "GTRs": ["guitar", "gtr", "strum", "chord"],
-                "Vocal": ["vocal", "voice", "lead", "harmony", "choir"],
-                "Synth": ["synth", "lead", "pluck", "arp"],
-                "Pad": ["pad", "string", "atmosphere"],
-                "Orchestra": ["orchestra", "violin", "cello", "brass"],
-                "Piano": ["piano", "keys", "electric"],
-                "Fx": ["fx", "effect", "ambient", "riser", "sweep"],
-                "Perc": ["perc", "shaker", "tambourine", "conga"]
+                "Drums": [
+                    "drum", "kick", "snare", "hat", "hihat", "hi-hat", "cymbal", "tom",
+                    "clap", "rim", "crash", "ride", "open hat", "closed hat", "oh", "ch",
+                    "top", "groove", "beat", "loop", "break", "fill", "roll",
+                    "snr", "kck", "hh", "sn", "bd", "sd"
+                ],
+                "Bass": [
+                    "bass", "sub", "808", "low", "reese", "wobble",
+                    "subbass", "sub-bass", "lowend", "low-end", "deep",
+                    "boom", "rumble", "drone bass"
+                ],
+                "GTRs": [
+                    "guitar", "gtr", "strum", "chord", "acoustic", "electric guitar",
+                    "clean guitar", "distorted", "overdrive", "gt", "nylon",
+                    "riff", "lick", "picking", "fingerpick", "slide guitar",
+                    "acoustic gtr", "elec gtr", "eg", "ag"
+                ],
+                "Vocal": [
+                    "vocal", "voice", "vox", "harmony", "choir", "chorus vocal",
+                    "adlib", "ad lib", "ad-lib", "hook", "verse", "bridge vocal",
+                    "backing", "bgv", "bvox", "main vocal", "dub", "stack",
+                    "acapella", "a cappella", "humming", "whisper",
+                    "rap", "sing", "falsetto", "alto", "soprano", "tenor",
+                    "harmonies", "voc", "vocoder"
+                ],
+                "Synth": [
+                    "synth", "lead", "pluck", "arp", "arpegg", "saw", "square",
+                    "pulse", "supersaw", "acid", "reese synth", "analog",
+                    "digital", "fm", "wavetable", "detune", "unison",
+                    "mono synth", "poly synth", "stab", "brass synth",
+                    "synth lead", "synth bass", "chiptune", "bit", "retro",
+                    "sidechain", "growl", "neuro", "hoover", "portamento"
+                ],
+                "Pad": [
+                    "pad", "atmosphere", "atmos", "ambient", "texture", "drone",
+                    "evolving", "slow", "wash", "lush", "warm pad", "dark pad",
+                    "bright pad", "space", "ethereal", "cloud", "shimmer",
+                    "soundscape", "bg", "background", "bed"
+                ],
+                "Orchestra": [
+                    "orchestra", "violin", "cello", "brass", "string", "strings",
+                    "flute", "horn", "oboe", "clarinet", "trumpet", "trombone",
+                    "tuba", "viola", "contrabass", "harp", "timpani",
+                    "woodwind", "ensemble", "section", "pizzicato", "legato",
+                    "staccato", "tremolo", "spiccato", "marcato",
+                    "symphonic", "cinematic", "epic", "score", "orch",
+                    "french horn", "english horn", "bassoon", "piccolo"
+                ],
+                "Piano": [
+                    "piano", "keys", "keyboard", "rhodes", "wurlitzer",
+                    "ep", "electric piano", "grand", "upright", "clavinet",
+                    "organ", "b3", "hammond", "melodica", "celesta",
+                    "marimba", "vibraphone", "xylophone", "glockenspiel",
+                    "mallet", "bell", "chime", "pno", "pn"
+                ],
+                "Fx": [
+                    "fx", "effect", "riser", "sweep", "impact",
+                    "whoosh", "transition", "buildup", "build-up", "build up",
+                    "drop", "hit", "boom fx", "reverse", "rev",
+                    "noise", "white noise", "swell", "downlifter",
+                    "uplifter", "tension", "stinger", "glitch",
+                    "foley", "sfx", "one shot", "oneshot"
+                ],
+                "Perc": [
+                    "perc", "shaker", "tambourine", "conga", "bongo",
+                    "timbale", "djembe", "cajon", "cowbell", "triangle",
+                    "guiro", "woodblock", "agogo", "cabasa", "maracas",
+                    "tabla", "taiko", "hand drum", "finger", "snap",
+                    "click", "tick", "percussion", "ethnic", "world"
+                ]
             }
 
         # Carregar do Supabase se existir

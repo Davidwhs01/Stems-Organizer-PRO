@@ -23,11 +23,10 @@ class FileOperations:
         return count
 
     @staticmethod
-    def move_file(source_path, target_name, category, root_folder, parent_folder_map):
-        """Move arquivo para a categoria apropriada e retorna novo caminho"""
+    def move_file(source_path, target_name, category, root_folder):
+        """Move arquivo para a categoria em estrutura flat: <root>/<Category>/"""
         try:
-            parent_folder = parent_folder_map.get(category, "Outros")
-            cat_path = os.path.join(root_folder, parent_folder, category)
+            cat_path = os.path.join(root_folder, category)
             os.makedirs(cat_path, exist_ok=True)
             
             dest = os.path.join(cat_path, target_name)
@@ -68,15 +67,17 @@ class FileOperations:
             raise
 
     @staticmethod
-    def create_action(action_type, source_path, target_name=None, category=None):
+    def create_action(action_type, source_path, destino=None, target_name=None, category=None, source_name=None):
         """Cria dicionário descritivo de ação planejada"""
         action = {
             'action': action_type,
             'source_path': source_path,
-            'source_name': os.path.basename(source_path)
+            'source_name': source_name or os.path.basename(source_path)
         }
         if target_name:
             action['target_name'] = target_name
         if category:
             action['category'] = category
+        if destino:
+            action['destino'] = destino
         return action

@@ -175,7 +175,7 @@ class App:
             self.folder_path_entry.insert(0, path)
             self.folder_path_entry.configure(state="readonly")
             self.start_button.configure(state="normal")
-            wav_files = [f for f in os.listdir(path) if f.lower().endswith('.wav')]
+            wav_files = [f for _, _, files in os.walk(path) for f in files if f.lower().endswith('.wav')]
             ToastNotification(self.root, f"Pasta carregada: {len(wav_files)} arquivos .wav", "info")
             self.navigate_to("organize")
         else:
@@ -406,7 +406,7 @@ class App:
         # Call the appropriate page function
         if page == "organize":
             if self.folder_path_full:
-                self.show_folder_preview([f for f in os.listdir(self.folder_path_full) if f.lower().endswith('.wav')][:10])
+                self.show_folder_preview([f for _, _, files in os.walk(self.folder_path_full) for f in files if f.lower().endswith('.wav')][:10])
             else:
                 self.pages[page]()
         elif page in self.pages:
@@ -800,6 +800,7 @@ class App:
         try:
             # Inicializar feedback
             self.execution_feedback.start_feedback(100)
+            self.processing_start_time = time.time()
 
             # Etapa 1: Configuração
             self.execution_feedback.update_activity("Configurando sistema e baixando regras...")
@@ -897,8 +898,15 @@ class App:
                 # Classificação local (só se não foi descartado por silêncio)
                 categoria_encontrada = self.classifier.classify_locally(nome_final)
                 if categoria_encontrada:
-                    FileOperations.move_file(caminho, nome_final, categoria_encontrada, pasta_raiz, self.classifier.PARENT_FOLDER_MAP)
-                    self.execution_feedback.add_file_entry(nome_final, categoria_encontrada, "🎤")
+                    # COLECIONAR no plano, não mover agora!
+                    categoria_path = os.path.join(pasta_raiz, categoria_encontrada)
+                    destino = os.path.join(categoria_path, nome_final)
+                    action = FileOperations.create_action(
+                        'move', caminho, destino=destino,
+                        category=categoria_encontrada, source_name=nome_original, target_name=nome_final
+                    )
+                    self.planned_actions.append(action)
+                    self.execution_feedback.add_file_entry(nome_final, categoria_encontrada, "")
                     self.execution_feedback.update_stats('classified')
                 else:
                     candidatos_para_analise[nome_final] = caminho
@@ -908,18 +916,14 @@ class App:
                     time.sleep(0.01)
 
             # A verificação de silêncio já foi feita na Etapa 4 para TODOS os arquivos
-            # Os candidatos restantes são apenas os que não são silenciosos
             candidatos_para_ia = candidatos_para_analise
 
-            # Etapa 6: Classificação com IA e Human-in-the-Loop
-            ai_results_collected = {}
-
+            # Etapa 6: Classificação com IA
             if candidatos_para_ia and self.api_configured:
                 total_ia = len(candidatos_para_ia)
                 self.execution_feedback.update_activity(f"Consultando IA para {total_ia} arquivos...")
                 self.update_status(f"Consultando IA para {total_ia} arquivos...", 0.7)
 
-                # Processar em lotes menores para evitar timeout
                 batch_size = 15
                 processed_count = 0
 
@@ -931,69 +935,105 @@ class App:
                         for nome, categoria in batch_results.items():
                             processed_count += 1
                             final_progress = 0.7 + (processed_count / total_ia) * 0.25
-                            
-                            self.execution_feedback.update_activity(f"Processando resultado IA: {nome}")
-                            self.update_status(f"Processando IA [{processed_count}/{total_ia}]: {nome}", final_progress)
+                            self.execution_feedback.update_activity(f"Resultado IA: {nome}")
+                            self.update_status(f"IA [{processed_count}/{total_ia}]: {nome}", final_progress)
 
                             caminho_original = candidatos_para_ia.get(nome)
                             if caminho_original:
-                                ai_results_collected[nome] = {
-                                    'categoria': categoria,
-                                    'caminho': caminho_original
-                                }
-
-                    # Pausa entre lotes
+                                # Adicionar ao plano
+                                categoria_path = os.path.join(pasta_raiz, categoria)
+                                destino = os.path.join(categoria_path, nome)
+                                action = FileOperations.create_action(
+                                    'move', caminho_original, destino=destino,
+                                    category=categoria, source_name=nome, target_name=nome
+                                )
+                                self.planned_actions.append(action)
                     time.sleep(0.5)
 
-            # Ao inves de ir para o relatorio final direto, mostramos a tela de Revisão
+            # Restantes que nem a IA classificou → Outros
+            for nome, caminho in candidatos_para_ia.items():
+                already_planned = any(a.get('source_path') == caminho for a in self.planned_actions)
+                if not already_planned:
+                    categoria_path = os.path.join(pasta_raiz, "Outros")
+                    destino = os.path.join(categoria_path, nome)
+                    action = FileOperations.create_action(
+                        'move', caminho, destino=destino,
+                        category="Outros", source_name=nome, target_name=nome
+                    )
+                    self.planned_actions.append(action)
+
+            # Mostrar tela de revisão com TODAS as ações planejadas
             self.execution_feedback.update_activity("Análise concluída! Abrindo painel de revisão...")
-            self.update_status("Análise concluída! Por favor, revise as classificações.", 1.0)
+            self.update_status(f"Análise concluída! {len(self.planned_actions)} ações planejadas.", 1.0)
             time.sleep(1)
             
-            # Se a IA não sugeriu nada, ir direto pro relatório
-            if not ai_results_collected:
+            # Converter planned_actions em formato de revisão
+            review_data = {}
+            for action in self.planned_actions:
+                if action['action'] == 'move' and action.get('category'):
+                    nome = action.get('target_name', action['source_name'])
+                    review_data[nome] = {
+                        'categoria': action['category'],
+                        'caminho': action['source_path'],
+                        'foi_alterado': False
+                    }
+            
+            if review_data:
+                self.set_ui_state("review")
+                self.root.after(0, lambda: self.show_review_screen(review_data))
+            else:
                 self.set_ui_state("report")
                 self.root.after(0, self.show_final_report)
-            else:
-                self.set_ui_state("review")
-                self.root.after(0, lambda: self.show_review_screen(ai_results_collected))
 
         except Exception as e:
             error_msg = f"Aviso de IA: {str(e)}"
-            self.update_status("Classificação IA falhou ou limite atingido. Agrupando desconhecidos...", 0.9)
+            self.update_status("Erro na classificação. Agrupando como 'Outros' para revisão...", 0.9)
             
-            # FALLBACK DE IA: Adicionar os não classificados como 'Outros' para revisão manual
+            # FALLBACK: Adicionar não classificados como 'Outros' ao plano
             if 'candidatos_para_ia' in locals() and candidatos_para_ia:
+                pasta_raiz = self.folder_path_full
                 for nome, caminho in candidatos_para_ia.items():
-                    if nome not in ai_results_collected:
-                       # Só adicionamos os que falharam na IA
-                       ai_results_collected[nome] = {
-                           'categoria': "Outros",
-                           'caminho': caminho
-                       }
+                    already_planned = any(a.get('source_path') == caminho for a in self.planned_actions)
+                    if not already_planned:
+                        categoria_path = os.path.join(pasta_raiz, "Outros")
+                        destino = os.path.join(categoria_path, nome)
+                        action = FileOperations.create_action(
+                            'move', caminho, destino=destino,
+                            category="Outros", source_name=nome, target_name=nome
+                        )
+                        self.planned_actions.append(action)
             
-            # Forçar tela de revisão com os 'Outros' para não inutilizar a ferramenta
-            if ai_results_collected:
-                # Mostrar o Toast em vez de error popup travando tudo
-                self.root.after(0, lambda: ToastNotification(self.root, "Cota da IA atingida/Erro. Arquivos foram marcados como 'Outros' para revisão manual.", "warning"))
+            # Converter planned_actions em review_data e mostrar revisão
+            review_data = {}
+            for action in self.planned_actions:
+                if action['action'] == 'move' and action.get('category'):
+                    nome = action.get('target_name', action['source_name'])
+                    review_data[nome] = {
+                        'categoria': action['category'],
+                        'caminho': action['source_path'],
+                        'foi_alterado': False
+                    }
+            
+            if review_data:
+                self.root.after(0, lambda: ToastNotification(self.root, "Erro na IA. Arquivos estão em 'Outros' para revisão manual.", "warning"))
                 self.set_ui_state("review")
-                self.root.after(2000, lambda: self.show_review_screen(ai_results_collected))
+                self.root.after(2000, lambda: self.show_review_screen(review_data))
             else:
                 self.set_ui_state("report")
                 self.root.after(0, self.show_final_report)
 
         finally:
             self.is_processing = False
-            # self.enable_controls() # Movido para set_ui_state
 
     def processar_resultados_revisados(self, final_results):
         """Chamado pelo botão da tela de revisão após o usuário validar as categorias"""
         pasta_raiz = self.folder_path_full
+        self.planned_actions = []  # Rebuild from review
         
         for nome, result in final_results.items():
             categoria = result['categoria']
             caminho_original = result['caminho']
-            foi_alterado = result['foi_alterado']
+            foi_alterado = result.get('foi_alterado', False)
             
             # Ensinar a IA se o usuário alterou ativamente a sugestão
             if foi_alterado and categoria != "Outros" and categoria != "[Descartar]":
@@ -1002,14 +1042,13 @@ class App:
             # Adicionar a lista de ações que serao aplicadas
             if categoria == "[Descartar]":
                 self.planned_actions.append(FileOperations.create_action('delete', caminho_original))
-            elif categoria != "Outros":
-                pasta_pai = self.classifier.PARENT_FOLDER_MAP.get(categoria, "Outros")
-                categoria_path = os.path.join(pasta_raiz, pasta_pai, categoria)
-                destino = os.path.join(categoria_path, nome)
-                action = FileOperations.create_action('move', caminho_original, destino=destino, category=categoria, source_name=nome, target_name=nome)
-                self.planned_actions.append(action)
             else:
-                action = FileOperations.create_action('rename', caminho_original, target_name=nome)
+                categoria_path = os.path.join(pasta_raiz, categoria)
+                destino = os.path.join(categoria_path, nome)
+                action = FileOperations.create_action(
+                    'move', caminho_original, destino=destino,
+                    category=categoria, source_name=nome, target_name=nome
+                )
                 self.planned_actions.append(action)
                 
         # Mostra o relatório final confirmando tudo
@@ -1069,22 +1108,22 @@ class App:
                         self.execution_feedback.update_activity(f"Movendo: {action['source_name']}")
                         self.update_status(f"Movendo [{i+1}/{len(self.planned_actions)}]: {action['source_name']}", progress)
                         
-                        # Calcular destino antes de mover
-                        pasta_pai = self.classifier.PARENT_FOLDER_MAP.get(action['category'], "Outros")
-                        categoria_path = os.path.join(self.folder_path_full, pasta_pai, action['category'])
-                        destino = os.path.join(categoria_path, action['target_name'])
-                        
-                        # Executar movimento real
-                        FileOperations.move_file(action['source_path'], action['target_name'], action['category'], self.folder_path_full, self.classifier.PARENT_FOLDER_MAP)
+                        # Executar movimento real (flat structure)
+                        FileOperations.move_file(
+                            action['source_path'], action['target_name'],
+                            action['category'], self.folder_path_full
+                        )
                         
                         # Registrar para undo
+                        categoria_path = os.path.join(self.folder_path_full, action['category'])
+                        destino = os.path.join(categoria_path, action['target_name'])
                         undo_batch.append({
                             'type': 'move',
                             'source': action['source_path'],
                             'destination': destino
                         })
                         
-                        self.execution_feedback.add_file_entry(action['target_name'], action['category'], "✅")
+                        self.execution_feedback.add_file_entry(action['target_name'], action['category'], "")
                         
                     elif action['action'] == 'delete':
                         filename = os.path.basename(action['source_path'])
@@ -1147,10 +1186,15 @@ class App:
                 self.undo_history.append(undo_batch)
                 self.root.after(0, self.show_undo_button)
 
+            # Salvar no histórico de sessões
+            duration = time.time() - self.processing_start_time if self.processing_start_time else 0
+            categories_used = list(set(a.get('category', '') for a in self.planned_actions if a.get('category')))
+            SessionHistory.add(self.folder_path_full, success_count, categories_used, duration)
+
             # Finalizar
-            final_message = f"Aplicação concluída!\n✅ {success_count} sucessos"
+            final_message = f"Aplicação concluída!\n{success_count} sucessos"
             if error_count > 0:
-                final_message += f"\n❌ {error_count} erros"
+                final_message += f"\n{error_count} erros"
 
             self.execution_feedback.update_activity("Aplicação concluída!")
             self.update_status(final_message, 1.0)
@@ -1174,6 +1218,51 @@ class App:
                 winsound.PlaySound("SystemExclamation", winsound.SND_ALIAS | winsound.SND_ASYNC)
             except Exception:
                 pass
+
+    def undo_last_action(self):
+        """Desfaz a última aplicação de organização"""
+        if not self.undo_history:
+            ToastNotification(self.root, "Nenhuma ação para desfazer.", "info")
+            return
+        
+        last_batch = self.undo_history.pop()
+        restored = 0
+        errors = 0
+        
+        for entry in reversed(last_batch):
+            try:
+                if entry['type'] == 'move':
+                    dest = entry['destination']
+                    source = entry['source']
+                    if os.path.exists(dest):
+                        # Garantir que a pasta de origem exista
+                        os.makedirs(os.path.dirname(source), exist_ok=True)
+                        shutil.move(dest, source)
+                        restored += 1
+                elif entry['type'] == 'rename':
+                    if os.path.exists(entry['new_path']):
+                        os.rename(entry['new_path'], entry['old_path'])
+                        restored += 1
+            except Exception as e:
+                errors += 1
+                logger.error(f"Erro ao desfazer: {e}")
+        
+        # Limpar pastas vazias criadas pela organização
+        if self.folder_path_full:
+            for root_dir, dirs, files in os.walk(self.folder_path_full, topdown=False):
+                if root_dir != self.folder_path_full and not files and not dirs:
+                    try:
+                        os.rmdir(root_dir)
+                    except Exception:
+                        pass
+        
+        msg = f"{restored} arquivos restaurados."
+        if errors > 0:
+            msg += f" {errors} erros."
+        ToastNotification(self.root, msg, "success" if errors == 0 else "warning")
+        
+        # Atualizar a tela
+        self.navigate_to("organize")
 
 
     def reset_for_new_organization(self):
