@@ -12,6 +12,10 @@ SetupIconFile=logo2.ico
 Compression=lzma
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64
+CloseApplications=force
+CloseApplicationsFilter=Stems Organizer PRO.exe
+RestartApplications=yes
+AppMutex=StemsOrganizerPRO_Mutex
 
 [Languages]
 Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
@@ -30,4 +34,5 @@ Name: "{group}\{cm:UninstallProgram,Stems Organizer PRO}"; Filename: "{uninstall
 Name: "{autodesktop}\Stems Organizer PRO"; Filename: "{app}\Stems Organizer PRO.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\Stems Organizer PRO.exe"; Description: "{cm:LaunchProgram,Stems Organizer PRO}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\Stems Organizer PRO.exe"; Description: "{cm:LaunchProgram,Stems Organizer PRO}"; Flags: nowait postinstall skipifsilent shellexec
+Filename: "{app}\Stems Organizer PRO.exe"; Flags: nowait skipifnotsilent shellexec runasoriginaluser
