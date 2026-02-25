@@ -1,9 +1,9 @@
 [Setup]
 AppName=Stems Organizer PRO
-AppVersion=1.9.0
+AppVersion=1.9.1
 AppPublisher=Prod. Aki
 AppPublisherURL=https://github.com/Davidwhs01/Stems-Organizer-PRO
-DefaultDirName={autopf}\Stems Organizer PRO
+DefaultDirName={localappdata}\Stems Organizer PRO
 DefaultGroupName=Stems Organizer PRO
 AllowNoIcons=yes
 OutputDir=Output
@@ -12,6 +12,7 @@ SetupIconFile=logo2.ico
 Compression=lzma
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64
+PrivilegesRequired=lowest
 CloseApplications=force
 CloseApplicationsFilter=Stems Organizer PRO.exe
 RestartApplications=yes

@@ -430,150 +430,232 @@ def show_settings_screen(app):
 
 
 def show_review_screen(app, ai_results):
-    """Mostra tela Human-in-the-Loop com visual interativo de pastas em tempo real"""
+    """Tela de revisão com abas por categoria — clique na pasta à esquerda para ver os arquivos"""
     app.clear_frame(app.visual_organizer_frame)
     all_categories = list(app.classifier.LOCAL_CLASSIFICATION_RULES.keys()) + ["Outros", "[Descartar]"]
 
-    # Estado isolado para o review
+    # Estado isolado
     review_state = {
         'files': ai_results.copy(),
         'file_widgets': {},
-        'category_frames': {},
+        'selected_cat': None,
+        'tab_buttons': {},
         'counts': {cat: 0 for cat in all_categories}
     }
 
     # Contagem inicial
     for dados in review_state['files'].values():
         cat = dados['categoria']
-        if cat not in review_state['counts']: cat = "Outros"
+        if cat not in review_state['counts']:
+            cat = "Outros"
         review_state['counts'][cat] += 1
 
+    total_files = sum(review_state['counts'].values())
+
+    # Layout principal
     review_frame = ctk.CTkFrame(app.visual_organizer_frame, fg_color="transparent")
-    review_frame.pack(fill="both", expand=True, padx=20, pady=10)
-    review_frame.grid_columnconfigure(0, weight=1)
-    review_frame.grid_columnconfigure(1, weight=2)
-    review_frame.grid_rowconfigure(0, weight=1)
+    review_frame.pack(fill="both", expand=True, padx=15, pady=8)
+    review_frame.grid_columnconfigure(0, weight=0, minsize=220)
+    review_frame.grid_columnconfigure(1, weight=1)
+    review_frame.grid_rowconfigure(1, weight=1)
 
-    # ============= PAINEL DE RESUMO (ESQUERDA) =============
-    summary_panel = ctk.CTkFrame(review_frame, fg_color=COLOR_FRAME, corner_radius=15, width=280)
-    summary_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 15), pady=0)
-    summary_panel.pack_propagate(False)
+    # ============= HEADER COMPACTO =============
+    header = ctk.CTkFrame(review_frame, fg_color=COLOR_FRAME, corner_radius=10, height=50)
+    header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+    header.pack_propagate(False)
 
-    title_frame = ctk.CTkFrame(summary_panel, fg_color=COLOR_ACCENT_CYAN, corner_radius=10)
-    title_frame.pack(fill="x", padx=15, pady=(15, 20))
-    ctk.CTkLabel(title_frame, text="🤖 Revisão de IA", font=("", 18, "bold"), text_color=COLOR_BACKGROUND).pack(pady=12)
-    
-    ctk.CTkLabel(summary_panel, text="Mova os arquivos entre as\npastas para corrigir a IA.", font=("", 12), text_color=COLOR_TEXT_DIM).pack(pady=(0, 20))
+    header_inner = ctk.CTkFrame(header, fg_color="transparent")
+    header_inner.pack(fill="both", expand=True, padx=15)
 
-    # Atualiza as contagens no painel à esquerda
-    count_vars = {}
-    stats_frame = ctk.CTkScrollableFrame(summary_panel, fg_color="transparent")
-    stats_frame.pack(fill="both", expand=True, padx=5, pady=5)
-    
-    def update_sidebar_counts():
-        for widget in stats_frame.winfo_children():
-            widget.destroy()
-        
-        for cat in all_categories:
-            if review_state['counts'].get(cat, 0) > 0:
-                row = ctk.CTkFrame(stats_frame, fg_color=COLOR_BACKGROUND, corner_radius=6)
-                row.pack(fill="x", padx=10, pady=4)
-                ctk.CTkLabel(row, text=f"📂 {cat}", font=("", 12), text_color=COLOR_TEXT).pack(side="left", padx=10, pady=8)
-                ctk.CTkLabel(row, text=str(review_state['counts'][cat]), font=("", 14, "bold"), text_color=COLOR_ACCENT_PURPLE).pack(side="right", padx=10)
-                
-    update_sidebar_counts()
+    ctk.CTkLabel(
+        header_inner, text="Revisão de Organização",
+        font=FONT_TITLE, text_color=COLOR_TEXT
+    ).pack(side="left", pady=8)
 
-    # ============= PAINEL DE PASTAS INTERATIVAS (DIREITA) =============
-    actions_panel = ctk.CTkFrame(review_frame, fg_color=COLOR_FRAME, corner_radius=15)
-    actions_panel.grid(row=0, column=1, sticky="nsew", pady=0)
+    total_label = ctk.CTkLabel(
+        header_inner, text=f"{total_files} arquivos analisados",
+        font=FONT_CAPTION, text_color=COLOR_TEXT_DIM
+    )
+    total_label.pack(side="left", padx=(15, 0), pady=8)
 
-    actions_title = ctk.CTkFrame(actions_panel, fg_color=COLOR_ACCENT_PURPLE, corner_radius=10)
-    actions_title.pack(fill="x", padx=15, pady=(15, 5))
-    ctk.CTkLabel(actions_title, text="📂 Organização Sugerida (Arraste ou Selecione)", font=("", 16, "bold"), text_color="#FFFFFF").pack(pady=10)
+    # Botão Confirmar no header
+    ctk.CTkButton(
+        header_inner, text="Confirmar",
+        font=FONT_BUTTON, height=32, width=120,
+        fg_color=COLOR_SUCCESS, hover_color="#059669",
+        text_color="white", corner_radius=8,
+        command=lambda: app.processar_resultados_revisados(review_state['files'])
+    ).pack(side="right", pady=8)
 
-    scroll = ctk.CTkScrollableFrame(actions_panel, fg_color="transparent")
-    scroll.pack(fill="both", expand=True, pady=(0, 10))
+    # ============= SIDEBAR DE CATEGORIAS (ESQUERDA) =============
+    sidebar = ctk.CTkFrame(review_frame, fg_color=COLOR_FRAME, corner_radius=10, width=220)
+    sidebar.grid(row=1, column=0, sticky="nsew", padx=(0, 8))
+    sidebar.pack_propagate(False)
 
-    # Função que cria ou pega o frame da categoria
-    def get_category_container(cat_name):
-        if cat_name not in review_state['category_frames']:
-            cat_frame = ctk.CTkFrame(scroll, fg_color="transparent")
-            cat_frame.pack(fill="x", pady=(10, 5), padx=5)
-            
-            header = ctk.CTkLabel(cat_frame, text=f"📂 {cat_name}", font=("", 14, "bold"), text_color=COLOR_ACCENT_CYAN)
-            header.pack(pady=(0, 5), padx=10, anchor="w")
-            
-            content_frame = ctk.CTkFrame(cat_frame, fg_color="transparent")
-            content_frame.pack(fill="x")
-            
-            review_state['category_frames'][cat_name] = {'main': cat_frame, 'header': header, 'content': content_frame}
-        
-        # Atualiza título com contagem
+    ctk.CTkLabel(
+        sidebar, text="Categorias",
+        font=FONT_BODY_BOLD, text_color=COLOR_TEXT_DIM
+    ).pack(padx=12, pady=(12, 6), anchor="w")
+
+    tabs_scroll = ctk.CTkScrollableFrame(sidebar, fg_color="transparent", scrollbar_button_color=COLOR_BORDER)
+    tabs_scroll.pack(fill="both", expand=True, padx=4, pady=(0, 8))
+
+    # ============= PAINEL DE ARQUIVOS (DIREITA) =============
+    files_panel = ctk.CTkFrame(review_frame, fg_color=COLOR_FRAME, corner_radius=10)
+    files_panel.grid(row=1, column=1, sticky="nsew")
+
+    # Header do painel de arquivos
+    files_header = ctk.CTkFrame(files_panel, fg_color="transparent", height=40)
+    files_header.pack(fill="x", padx=12, pady=(10, 4))
+    files_header.pack_propagate(False)
+
+    cat_title_label = ctk.CTkLabel(
+        files_header, text="Selecione uma categoria",
+        font=FONT_SUBTITLE, text_color=COLOR_ACCENT_CYAN
+    )
+    cat_title_label.pack(side="left", anchor="w")
+
+    cat_count_label = ctk.CTkLabel(
+        files_header, text="",
+        font=FONT_CAPTION, text_color=COLOR_TEXT_DIM
+    )
+    cat_count_label.pack(side="right", anchor="e")
+
+    files_scroll = ctk.CTkScrollableFrame(
+        files_panel, fg_color="transparent",
+        scrollbar_button_color=COLOR_BORDER
+    )
+    files_scroll.pack(fill="both", expand=True, padx=4, pady=(0, 8))
+
+    # ============= FUNÇÕES DE NAVEGAÇÃO =============
+    def select_category(cat_name):
+        """Mostra os arquivos da categoria selecionada"""
+        review_state['selected_cat'] = cat_name
+
+        # Atualiza visual dos tabs
+        for name, btn in review_state['tab_buttons'].items():
+            if name == cat_name:
+                btn.configure(
+                    fg_color=COLOR_ACCENT_CYAN, text_color=COLOR_BACKGROUND,
+                    hover_color=COLOR_ACCENT_CYAN
+                )
+            else:
+                btn.configure(
+                    fg_color="transparent", text_color=COLOR_TEXT,
+                    hover_color=COLOR_SURFACE
+                )
+
+        # Limpa os arquivos exibidos
+        for w in files_scroll.winfo_children():
+            w.destroy()
+
+        # Header com nome e contagem
         count = review_state['counts'].get(cat_name, 0)
-        review_state['category_frames'][cat_name]['header'].configure(text=f"📂 {cat_name} ({count} arquivos)")
-        review_state['category_frames'][cat_name]['main'].pack(fill="x", pady=(10, 5), padx=5) if count > 0 else review_state['category_frames'][cat_name]['main'].pack_forget()
-        
-        return review_state['category_frames'][cat_name]['content']
+        cat_title_label.configure(text=cat_name)
+        cat_count_label.configure(text=f"{count} arquivo{'s' if count != 1 else ''}")
 
-    # Função para mover o botão visualmente
+        # Lista arquivos desta categoria
+        files_in_cat = [
+            (nome, dados) for nome, dados in review_state['files'].items()
+            if dados['categoria'] == cat_name
+        ]
+
+        if not files_in_cat:
+            ctk.CTkLabel(
+                files_scroll, text="Nenhum arquivo nesta categoria",
+                font=FONT_CAPTION, text_color=COLOR_TEXT_DIM
+            ).pack(pady=30)
+            return
+
+        for nome, dados in files_in_cat:
+            row = ctk.CTkFrame(files_scroll, fg_color=COLOR_BACKGROUND, corner_radius=6, height=36)
+            row.pack(fill="x", padx=6, pady=1)
+            row.pack_propagate(False)
+
+            # Nome do arquivo (truncado)
+            disp_name = nome if len(nome) <= 45 else nome[:42] + "..."
+            ctk.CTkLabel(
+                row, text=disp_name,
+                font=FONT_CAPTION, text_color=COLOR_TEXT, anchor="w"
+            ).pack(side="left", padx=(10, 5), fill="x", expand=True)
+
+            # ComboBox para mover
+            combo = ctk.CTkComboBox(
+                row, values=all_categories, width=110, height=26,
+                font=FONT_CAPTION, dropdown_font=FONT_CAPTION,
+                fg_color=COLOR_SURFACE, border_color=COLOR_BORDER,
+                dropdown_fg_color=COLOR_CARD, button_color=COLOR_BORDER,
+                corner_radius=4,
+                command=lambda val, n=nome: on_category_change(n, val)
+            )
+            combo.pack(side="right", padx=6, pady=4)
+            combo.set(cat_name)
+
     def on_category_change(nome, nova_cat):
+        """Quando o usuário muda a categoria de um arquivo"""
         antiga_cat = review_state['files'][nome]['categoria']
-        if antiga_cat == nova_cat: return
-        
-        # Atualiza o estado
+        if antiga_cat == nova_cat:
+            return
+
         review_state['files'][nome]['categoria'] = nova_cat
         review_state['files'][nome]['foi_alterado'] = True
-        
         review_state['counts'][antiga_cat] -= 1
         review_state['counts'][nova_cat] += 1
-        
-        # Move o widget fisicamente repacking no novo container
-        widget_dict = review_state['file_widgets'][nome]
-        novo_container = get_category_container(nova_cat)
-        
-        widget_dict['frame'].pack_forget()
-        widget_dict['frame'].pack(in_=novo_container, fill="x", padx=10, pady=2)
-        
-        # Otimiza: atualiza os headers das duas categorias afetadas
-        get_category_container(antiga_cat)
-        update_sidebar_counts()
 
-    # Desenha os botões listados pelas pastas
-    for nome, dados in review_state['files'].items():
-        cat = dados['categoria']
-        if cat not in all_categories: cat = "Outros"
-        
-        container = get_category_container(cat)
-        
-        row = ctk.CTkFrame(container, fg_color=COLOR_BACKGROUND, corner_radius=8)
-        row.pack(fill="x", padx=10, pady=2)
-        
-        ctk.CTkLabel(row, text="🎵", font=("", 14)).pack(side="left", padx=10, pady=10)
-        disp_name = nome if len(nome)<=50 else nome[:47]+"..."
-        ctk.CTkLabel(row, text=disp_name, font=("", 12), anchor="w").pack(side="left", fill="x", expand=True, padx=5)
-        
-        combo = ctk.CTkComboBox(row, values=all_categories, width=140, fg_color=COLOR_SURFACE, border_color=COLOR_BORDER, dropdown_fg_color=COLOR_CARD,
-                                command=lambda val, n=nome: on_category_change(n, val))
-        combo.pack(side="right", padx=15)
-        combo.set(cat)
-        
-        review_state['file_widgets'][nome] = {'frame': row, 'combo': combo}
+        # Atualiza tabs
+        rebuild_tabs()
 
-    # Hide empty categories initially
+        # Re-seleciona a categoria atual
+        current = review_state['selected_cat']
+        if current:
+            select_category(current)
+
+    def rebuild_tabs():
+        """Reconstrói os tabs com contagens atualizadas"""
+        for w in tabs_scroll.winfo_children():
+            w.destroy()
+        review_state['tab_buttons'] = {}
+
+        for cat in all_categories:
+            count = review_state['counts'].get(cat, 0)
+            if count == 0:
+                continue
+
+            is_selected = (cat == review_state['selected_cat'])
+
+            btn = ctk.CTkButton(
+                tabs_scroll,
+                text=f"  {cat}",
+                font=FONT_BODY,
+                height=34,
+                anchor="w",
+                corner_radius=6,
+                fg_color=COLOR_ACCENT_CYAN if is_selected else "transparent",
+                text_color=COLOR_BACKGROUND if is_selected else COLOR_TEXT,
+                hover_color=COLOR_ACCENT_CYAN if is_selected else COLOR_SURFACE,
+                command=lambda c=cat: select_category(c)
+            )
+            btn.pack(fill="x", padx=4, pady=1)
+
+            # Badge de contagem
+            count_badge = ctk.CTkLabel(
+                btn, text=str(count),
+                font=FONT_CAPTION,
+                text_color=COLOR_BACKGROUND if is_selected else COLOR_ACCENT_PURPLE,
+                width=30
+            )
+            count_badge.place(relx=1.0, rely=0.5, anchor="e", x=-8)
+
+            review_state['tab_buttons'][cat] = btn
+
+    # ============= INICIALIZAÇÃO =============
+    rebuild_tabs()
+
+    # Auto-seleciona a primeira categoria com arquivos
     for cat in all_categories:
-        get_category_container(cat)
-
-    def on_confirm():
-        app.processar_resultados_revisados(review_state['files'])
-
-    btn_frame = ctk.CTkFrame(summary_panel, fg_color="transparent")
-    btn_frame.pack(fill="x", pady=(10, 20), side="bottom")
-    
-    ctk.CTkButton(
-        btn_frame, text="✅ Confirmar", font=("", 15, "bold"), 
-        height=45, fg_color=COLOR_SUCCESS, hover_color="#059669", text_color="white",
-        command=on_confirm
-    ).pack(padx=20, fill="x")
+        if review_state['counts'].get(cat, 0) > 0:
+            select_category(cat)
+            break
 
 
 def show_final_report(app):
