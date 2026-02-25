@@ -11,6 +11,8 @@ import threading
 import subprocess
 import urllib.request
 import logging
+import webbrowser
+from tkinter import messagebox
 
 import customtkinter as ctk
 
@@ -156,8 +158,14 @@ class AutoUpdater:
                 os._exit(0)
             except Exception as e:
                 parent_window.after(0, lambda: overlay.destroy())
-                parent_window.after(100, lambda: ToastNotification(
-                    parent_window, f"Falha na atualização: {e}", "error"
-                ))
+                
+                def fallback_action():
+                    error_msg = f"A atualização automática falhou.\nMotivo: {str(e)}\n\nO link de download manual da nova versão será aberto em seu navegador agora."
+                    logger.error(f"Falha na atualização automática: {e}")
+                    messagebox.showerror("Erro na Atualização Automática", error_msg)
+                    release_url = release_data.get('html_url', f"https://github.com/{GITHUB_REPO}/releases/latest")
+                    webbrowser.open(release_url)
+                
+                parent_window.after(100, fallback_action)
 
         threading.Thread(target=download_thread, daemon=True).start()
