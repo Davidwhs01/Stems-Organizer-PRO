@@ -699,34 +699,34 @@ def show_review_screen(app, ai_results):
 
         # Renderizar [Descartar] separadamente, com cor vermelha
         descartados_count = review_state['counts'].get("[Descartar]", 0)
-        if descartados_count > 0:
-            sep = ctk.CTkFrame(tabs_scroll, fg_color=COLOR_BORDER, height=1)
-            sep.pack(fill="x", padx=10, pady=5)
+        
+        sep = ctk.CTkFrame(tabs_scroll, fg_color=COLOR_BORDER, height=1)
+        sep.pack(fill="x", padx=10, pady=5)
 
-            is_selected = ("[Descartar]" == review_state['selected_cat'])
+        is_selected = ("[Descartar]" == review_state['selected_cat'])
 
-            btn = ctk.CTkButton(
-                tabs_scroll,
-                text="  DESCARTADOS",
-                font=FONT_BODY,
-                height=34,
-                anchor="w",
-                corner_radius=6,
-                fg_color=COLOR_ERROR if is_selected else "transparent",
-                text_color="white" if is_selected else COLOR_ERROR,
-                hover_color="#c62828" if is_selected else COLOR_SURFACE,
-                command=lambda: select_category("[Descartar]")
-            )
-            btn.pack(fill="x", padx=4, pady=1)
+        btn = ctk.CTkButton(
+            tabs_scroll,
+            text="  DESCARTADOS",
+            font=FONT_BODY,
+            height=34,
+            anchor="w",
+            corner_radius=6,
+            fg_color=COLOR_ERROR if is_selected else "transparent",
+            text_color="white" if is_selected else COLOR_ERROR,
+            hover_color="#c62828" if is_selected else COLOR_SURFACE,
+            command=lambda: select_category("[Descartar]")
+        )
+        btn.pack(fill="x", padx=4, pady=1)
 
-            count_badge = ctk.CTkLabel(
-                btn, text=str(descartados_count),
-                font=FONT_CAPTION,
-                text_color="white" if is_selected else COLOR_ERROR,
-                width=30
-            )
-            count_badge.place(relx=1.0, rely=0.5, anchor="e", x=-8)
-            review_state['tab_buttons']["[Descartar]"] = btn
+        count_badge = ctk.CTkLabel(
+            btn, text=str(descartados_count),
+            font=FONT_CAPTION,
+            text_color="white" if is_selected else COLOR_ERROR,
+            width=30
+        )
+        count_badge.place(relx=1.0, rely=0.5, anchor="e", x=-8)
+        review_state['tab_buttons']["[Descartar]"] = btn
 
     # ============= CONTROLES DO FOOTER =============
     # Esconder Aplicar (redundante com Confirmar) e rewire Desfazer
