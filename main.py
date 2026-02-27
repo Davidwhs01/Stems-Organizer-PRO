@@ -682,9 +682,7 @@ class App:
                 # Tela de revisão ou relatório final onde precisam "Aplicar"
                 self.apply_button.grid(row=0, column=0, padx=(0, 8))
                 self.undo_button.grid(row=0, column=1, padx=(0, 8))
-                self.start_button.grid(row=0, column=2, padx=(0, 5))
                 
-                self.start_button.configure(state="normal")
                 self.apply_button.configure(state="normal")
                 self.undo_button.configure(state="normal")
                 
@@ -1052,6 +1050,7 @@ class App:
                 self.planned_actions.append(action)
                 
         # Mostra o relatório final confirmando tudo
+        self.set_ui_state("report")
         self.show_final_report()
 
 
