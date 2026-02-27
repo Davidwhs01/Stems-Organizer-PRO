@@ -831,7 +831,14 @@ class App:
             todos_os_arquivos = {}
 
             try:
+                # Obter lista de categorias padrão para isolar caso encontremos essas subpastas
+                standard_categories = [cat.lower() for cat in self.classifier.LOCAL_CLASSIFICATION_RULES.keys()] + ['outros']
+
                 for root, dirs, files in os.walk(pasta_raiz):
+                    # Filtrar dirs para não entrar nas pastas das próprias categorias (evita re-organizar o que já foi organizado)
+                    if root == pasta_raiz:
+                        dirs[:] = [d for d in dirs if d.lower() not in standard_categories]
+
                     for file in files:
                         if file.lower().endswith('.wav'):
                             full_path = os.path.join(root, file)
@@ -1183,7 +1190,8 @@ class App:
             # Salvar histórico para undo se houve sucesso
             if undo_batch:
                 self.undo_history.append(undo_batch)
-                self.root.after(0, self.show_undo_button)
+                self.root.after(0, self.show_apply_button) # O botão Undo já fica na mesma linha que Aplicar/Confirmar, então ativamos com show_apply_button se não usar grid direto.
+
 
             # Salvar no histórico de sessões
             duration = time.time() - self.processing_start_time if self.processing_start_time else 0

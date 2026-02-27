@@ -126,6 +126,13 @@ class AudioClassifier:
             except Exception as e:
                 logger.debug(f"Erro ao buscar regras Supabase: {e}")
         
+        # Garantir categoria BEAT FECHADO
+        if "BEAT FECHADO" not in self.LOCAL_CLASSIFICATION_RULES:
+            self.LOCAL_CLASSIFICATION_RULES["BEAT FECHADO"] = []
+        for kw in ["master", "beat fechado", "instrumental"]:
+            if kw not in self.LOCAL_CLASSIFICATION_RULES["BEAT FECHADO"]:
+                self.LOCAL_CLASSIFICATION_RULES["BEAT FECHADO"].append(kw)
+        
         return True
 
     def load_prompt(self):
@@ -233,6 +240,10 @@ Categorias válidas: {valid_categories_list}
 
     def is_audio_silent(self, filepath, deep_check=False):
         if not self.ffmpeg_available:
+            return False
+            
+        file_lower = os.path.basename(filepath).lower()
+        if "verb" in file_lower or "reverb" in file_lower:
             return False
             
         try:
