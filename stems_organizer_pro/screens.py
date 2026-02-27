@@ -317,7 +317,7 @@ def show_folder_preview(app, sample_files):
         file_label.pack(side="left", fill="x", expand=True, padx=10, pady=10)
 
     from stems_organizer_pro.file_ops import FileOperations
-    total_files = FileOperations.count_wav_files(app.folder_path_var.get())
+    total_files = FileOperations.count_wav_files(app.folder_path_full)
     if len(sample_files) < total_files:
         more_label = ctk.CTkLabel(
             preview_frame,
@@ -602,54 +602,39 @@ def show_review_screen(app, ai_results):
             row = ctk.CTkFrame(files_scroll, fg_color=COLOR_BACKGROUND, corner_radius=6)
             row.pack(fill="x", padx=6, pady=1)
 
-            # Campo editável para renomear o arquivo
-            name_entry = ctk.CTkEntry(
-                row, width=220, height=26,
-                font=FONT_CAPTION,
-                fg_color="transparent", border_color="transparent",
-                text_color=COLOR_TEXT
+            # Nome do arquivo (clicável para renomear)
+            disp_name = nome if len(nome) <= 50 else nome[:47] + "..."
+            name_label = ctk.CTkLabel(
+                row, text=disp_name,
+                font=FONT_CAPTION, text_color=COLOR_TEXT, anchor="w",
+                cursor="hand2"
             )
-            name_entry.insert(0, nome)
-            name_entry.pack(side="left", padx=(10, 5), pady=6, fill="x", expand=True)
+            name_label.pack(side="left", padx=(10, 5), pady=6, fill="x", expand=True)
 
-            def apply_rename(event=None, entry=name_entry, old_nome=nome):
-                try:
-                    novo = entry.get().strip()
-                except Exception:
-                    return  # Widget foi destruído durante rebuild do painel
-                if not novo or novo == old_nome:
+            def _rename_click(event=None, old_nome=nome, lbl=name_label):
+                dialog = ctk.CTkInputDialog(
+                    text=f"Novo nome para:\n{old_nome}",
+                    title="Renomear arquivo"
+                )
+                novo = dialog.get_input()
+                if not novo or not novo.strip() or novo.strip() == old_nome:
                     return
+                novo = novo.strip()
                 if novo in review_state['files']:
-                    try:
-                        entry.delete(0, "end")
-                        entry.insert(0, old_nome)
-                    except Exception:
-                        pass
                     return
-                # Migrar dados no state
                 if old_nome in review_state['files']:
                     review_state['files'][novo] = review_state['files'].pop(old_nome)
                     review_state['files'][novo]['foi_alterado'] = True
                     for u in review_state['undo_stack']:
                         if u.get('nome') == old_nome:
                             u['nome'] = novo
+                    disp = novo if len(novo) <= 50 else novo[:47] + "..."
+                    try:
+                        lbl.configure(text=disp)
+                    except Exception:
+                        pass
 
-            # Highlight ao focar (sem FocusOut duplicado)
-            def _on_focus_in(e, w=name_entry):
-                try:
-                    w.configure(border_color=COLOR_ACCENT_CYAN, border_width=1)
-                except Exception:
-                    pass
-            def _on_focus_out(e, w=name_entry, fn=apply_rename):
-                try:
-                    w.configure(border_color="transparent", border_width=0)
-                except Exception:
-                    pass
-                fn(e)
-
-            name_entry.bind("<Return>", apply_rename)
-            name_entry.bind("<FocusIn>", _on_focus_in)
-            name_entry.bind("<FocusOut>", _on_focus_out)
+            name_label.bind("<Double-Button-1>", _rename_click)
 
 
             # ComboBox para mover
