@@ -157,10 +157,8 @@ taskkill /F /IM "Stems Organizer PRO.exe" >NUL 2>&1
 timeout /t 2 /nobreak >NUL
 echo Executando instalador...
 start /wait "" "{temp_installer}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="{install_dir}"
-echo Instalacao concluida! Reabrindo...
+echo Instalacao concluida! Iniciando limpeza...
 timeout /t 2 /nobreak >NUL
-start "" "{app_exe}"
-timeout /t 1 /nobreak >NUL
 del "{temp_installer}" >NUL 2>&1
 del "%~f0"
 '''
