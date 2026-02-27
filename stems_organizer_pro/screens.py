@@ -494,6 +494,8 @@ def show_review_screen(app, ai_results):
     def cancel_review():
         app.planned_actions.clear()
         app.set_ui_state("idle")
+        # Voltar para a tela de organização com o preview da pasta
+        app.navigate_to("organize")
         from stems_organizer_pro.notifications import ToastNotification
         ToastNotification(app.root, "Análise cancelada.", "info")
 
