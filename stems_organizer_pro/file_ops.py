@@ -24,9 +24,10 @@ class FileOperations:
 
     @staticmethod
     def move_file(source_path, target_name, category, root_folder):
-        """Move arquivo para a categoria em estrutura flat: <root>/<Category>/, ou raiz se for BEAT FECHADO"""
+        """Move arquivo para a categoria em estrutura flat: <root>/<Category>/, ou raiz se BEAT FECHADO / Outros"""
         try:
-            if category == "BEAT FECHADO":
+            root_categories = {"BEAT FECHADO", "Outros"}
+            if category in root_categories:
                 cat_path = root_folder
             else:
                 cat_path = os.path.join(root_folder, category)
@@ -34,7 +35,24 @@ class FileOperations:
             
             dest = os.path.join(cat_path, target_name)
             
-            # Evitar sobrescrever
+            # Se origem == destino (case-insensitive no Windows), nao fazer nada
+            src_norm = os.path.normcase(os.path.abspath(source_path))
+            dst_norm = os.path.normcase(os.path.abspath(dest))
+            if src_norm == dst_norm:
+                return dest
+            
+            # Se o arquivo destino ja existe e e o mesmo arquivo (mesmo conteudo/tamanho)
+            # nao criar _1 - simplesmente deletar a origem redundante
+            if os.path.exists(dest):
+                try:
+                    if os.path.getsize(source_path) == os.path.getsize(dest):
+                        # Origem e destino tem o mesmo tamanho - provavelmente duplicata; remover origem
+                        os.remove(source_path)
+                        return dest
+                except Exception:
+                    pass
+
+            # Evitar sobrescrever arquivos diferentes
             counter = 1
             base, ext = os.path.splitext(target_name)
             while os.path.exists(dest):

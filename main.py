@@ -1076,7 +1076,8 @@ class App:
             if categoria == "[Descartar]":
                 self.planned_actions.append(FileOperations.create_action('delete', caminho_original))
             else:
-                if categoria == "BEAT FECHADO":
+                root_cats = {"BEAT FECHADO", "Outros"}
+                if categoria in root_cats:
                     destino = os.path.join(pasta_raiz, nome)
                 else:
                     categoria_path = os.path.join(pasta_raiz, categoria)
@@ -1168,23 +1169,14 @@ class App:
                         
                     elif action['action'] == 'delete':
                         filename = os.path.basename(action['source_path'])
-                        self.execution_feedback.update_activity(f"Descartando: {filename}")
-                        self.update_status(f"Descartando [{i+1}/{len(self.planned_actions)}]: {filename}", progress)
+                        self.execution_feedback.update_activity(f"Excluindo silencioso: {filename}")
+                        self.update_status(f"Excluindo [{i+1}/{len(self.planned_actions)}]: {filename}", progress)
                         
-                        # Mover para lixeira (criar pasta DESCARTADOS)
-                        discarded_folder = os.path.join(self.folder_path_full, "DESCARTADOS")
-                        os.makedirs(discarded_folder, exist_ok=True)
-                        target_path = os.path.join(discarded_folder, filename)
-                        shutil.move(action['source_path'], target_path)
+                        # Excluir permanentemente (arquivo silencioso/descartado)
+                        if os.path.exists(action['source_path']):
+                            os.remove(action['source_path'])
                         
-                        # Registrar para undo
-                        undo_batch.append({
-                            'type': 'move',
-                            'source': action['source_path'],
-                            'destination': target_path
-                        })
-                        
-                        self.execution_feedback.add_file_entry(filename, "Descartados", "🗑️")
+                        self.execution_feedback.add_file_entry(filename, "Excluídos", "🗑️")
                         
                     elif action['action'] == 'rename':
                         old_name = os.path.basename(action['source_path'])

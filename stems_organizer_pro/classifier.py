@@ -202,29 +202,35 @@ Categorias válidas: {valid_categories_list}
     def find_common_prefix(self, files):
         if not files: return ""
         
-        # Regex para capturar padrões comuns no início que devem ser cortados
-        # Ex: "01 - Kick", "[120 BPM] Snare", "Stem_04_"
+        # PASSO 1: Prefixo literal compartilhado (ex: "-_Master.wav", "-_Drums.wav" → prefixo "-_")
+        base_names = [os.path.splitext(f.strip())[0] for f in files]
+        literal_prefix = os.path.commonprefix(base_names)
+        if literal_prefix and len(literal_prefix) >= 1:
+            # Garantir que o prefixo termina num separador (_, -, espaço)
+            clean = literal_prefix.rstrip('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
+            if clean:
+                # Restore .wav extension placeholder so main.py can strip it from filename
+                return clean
+            # If prefix itself is alphanumeric (no trailing sep), try to back up to nearest sep
+            for sep in ('_', '-', ' ', '.'):
+                idx = literal_prefix.rfind(sep)
+                if idx > 0:
+                    return literal_prefix[:idx + 1]
+        
+        # PASSO 2: Heurística de sujeira/ruído (fallback)
         padrao_sujeira = re.compile(
             r'^('
-            r'\d+[\s\-_]*|'                          # "01 ", "01-", "01_"
-            r'\[.*?\][\s\-_]*|'                      # "[120 BPM] ", "[Gmaj]"
-            r'\(.*?\)[\s\-_]*|'                      # "(chorus) "
-            r'(stem|track|audio)[\s\_]*\d*[\s\-_]*'   # "Stem 01 - "
+            r'\d+[\s\-_]*|'
+            r'\[.*?\][\s\-_]*|'
+            r'\(.*?\)[\s\-_]*|'
+            r'(stem|track|audio)[\s\_]*\d*[\s\-_]*'
             r')+', 
             re.IGNORECASE
         )
-        
-        # Na verdade, não tentaremos encontrar um "prefixo comum" rígido.
-        # Nós vamos retornar uma função ou um prefixo estático melhor.
-        # Por enquanto, mantemos a lógica de prefixo idêntico, 
-        # mas permitimos que o main limpe a sujeira também.
-        
         possibles = []
         for f in files:
             nl = f.strip()
-            # Limpa prefixos isolados primeiro
             nl = padrao_sujeira.sub('', nl)
-            
             for i in range(3, min(25, len(nl))):
                 px = nl[:i]
                 if px.endswith(('_', '-', ' ', '.')):
@@ -232,7 +238,6 @@ Categorias válidas: {valid_categories_list}
         
         counter = Counter(possibles)
         for px, count in counter.most_common():
-            # A palavra tem que aparecer em pelo menos 3 arquivos ou 30% dos arquivos
             if count >= max(MIN_PREFIX_OCCURRENCES, int(len(files)*0.3)):
                 return px
         
