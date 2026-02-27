@@ -996,6 +996,13 @@ class App:
                         'caminho': action['source_path'],
                         'foi_alterado': False
                     }
+                elif action['action'] == 'delete':
+                    nome = os.path.basename(action['source_path'])
+                    review_data[nome] = {
+                        'categoria': '[Descartar]',
+                        'caminho': action['source_path'],
+                        'foi_alterado': False
+                    }
             
             if review_data:
                 self.set_ui_state("review")
@@ -1029,6 +1036,13 @@ class App:
                     nome = action.get('target_name', action['source_name'])
                     review_data[nome] = {
                         'categoria': action['category'],
+                        'caminho': action['source_path'],
+                        'foi_alterado': False
+                    }
+                elif action['action'] == 'delete':
+                    nome = os.path.basename(action['source_path'])
+                    review_data[nome] = {
+                        'categoria': '[Descartar]',
                         'caminho': action['source_path'],
                         'foi_alterado': False
                     }

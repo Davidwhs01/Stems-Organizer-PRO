@@ -316,7 +316,8 @@ def show_folder_preview(app, sample_files):
         )
         file_label.pack(side="left", fill="x", expand=True, padx=10, pady=10)
 
-    total_files = app.count_wav_files()
+    from stems_organizer_pro.file_ops import FileOperations
+    total_files = FileOperations.count_wav_files(app.folder_path_var.get())
     if len(sample_files) < total_files:
         more_label = ctk.CTkLabel(
             preview_frame,
@@ -435,6 +436,7 @@ def show_review_screen(app, ai_results):
     all_categories = list(app.classifier.LOCAL_CLASSIFICATION_RULES.keys()) + ["Outros", "[Descartar]"]
 
     # Estado isolado
+    print("DEBUG: ai_results has keys:", list(ai_results.keys()))
     review_state = {
         'files': ai_results.copy(),
         'file_widgets': {},
@@ -555,6 +557,16 @@ def show_review_screen(app, ai_results):
         count = review_state['counts'].get(cat_name, 0)
         cat_title_label.configure(text=cat_name)
         cat_count_label.configure(text=f"{count} arquivo{'s' if count != 1 else ''}")
+
+        if cat_name == "[Descartar]":
+            info_label = ctk.CTkLabel(
+                files_scroll,
+                text="⚠️ Arquivos identificados como silenciosos ou marcados manualmente para descarte.\nEles serão movidos para uma pasta 'Discarded' e lixeira.",
+                font=FONT_CAPTION,
+                text_color=COLOR_WARNING,
+                justify="left"
+            )
+            info_label.pack(anchor="w", padx=10, pady=(5, 10))
 
         # Lista arquivos desta categoria
         files_in_cat = [
@@ -700,7 +712,7 @@ def show_review_screen(app, ai_results):
         # Renderizar [Descartar] separadamente, com cor vermelha
         descartados_count = review_state['counts'].get("[Descartar]", 0)
         
-        sep = ctk.CTkFrame(tabs_scroll, fg_color=COLOR_BORDER, height=1)
+        sep = ctk.CTkFrame(tabs_scroll, fg_color="#3e1c1c", height=2)
         sep.pack(fill="x", padx=10, pady=5)
 
         is_selected = ("[Descartar]" == review_state['selected_cat'])
