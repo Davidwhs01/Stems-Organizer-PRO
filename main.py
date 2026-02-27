@@ -339,6 +339,14 @@ class App:
             font=FONT_BUTTON, command=self.clear_folder_selection, corner_radius=10
         )
 
+        self.reorganize_folders_var = ctk.BooleanVar(value=False)
+        self.reorganize_checkbox = ctk.CTkCheckBox(
+            self.controls_frame, text="Reorganizar pastas", 
+            variable=self.reorganize_folders_var, font=FONT_BODY,
+            fg_color=COLOR_ACCENT_PURPLE, hover_color=COLOR_BUTTON_HOVER,
+            corner_radius=4
+        )
+
         analysis_options = ["Análise Rápida (Padrão)", "Análise Profunda (Lenta)", "Nenhuma Análise (Mais Rápido)"]
         self.analysis_mode_combo = ctk.CTkComboBox(
             self.controls_frame, values=analysis_options, width=190, height=34,
@@ -663,11 +671,13 @@ class App:
                 
                 if hasattr(self, 'folder_path_full') and self.folder_path_full:
                     self.clear_button.grid(row=0, column=2, padx=(0, 8))
+                    self.reorganize_checkbox.grid(row=0, column=3, padx=(0, 8))
+                    self.analysis_mode_combo.grid(row=0, column=4, padx=(0, 8))
+                    self.start_button.grid(row=0, column=5, padx=(0, 5))
+                else:
+                    self.reorganize_checkbox.grid(row=0, column=2, padx=(0, 8))
                     self.analysis_mode_combo.grid(row=0, column=3, padx=(0, 8))
                     self.start_button.grid(row=0, column=4, padx=(0, 5))
-                else:
-                    self.analysis_mode_combo.grid(row=0, column=2, padx=(0, 8))
-                    self.start_button.grid(row=0, column=3, padx=(0, 5))
                 
                 self.folder_path_entry.configure(state="normal" if not self.folder_path_full else "readonly")
                 self.start_button.configure(state="normal" if self.folder_path_full else "disabled")
@@ -836,7 +846,7 @@ class App:
 
                 for root, dirs, files in os.walk(pasta_raiz):
                     # Filtrar dirs para não entrar nas pastas das próprias categorias (evita re-organizar o que já foi organizado)
-                    if root == pasta_raiz:
+                    if root == pasta_raiz and not self.reorganize_folders_var.get():
                         dirs[:] = [d for d in dirs if d.lower() not in standard_categories]
 
                     for file in files:
