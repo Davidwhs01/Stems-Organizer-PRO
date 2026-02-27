@@ -153,8 +153,21 @@ class App:
         except Exception:
             pass  # tkdnd não disponível, ignorar silenciosamente
         
+        # Fechar app ao clicar no X
+        def _on_close():
+            self.cancel_requested = True
+            self.is_processing = False
+            try:
+                self.root.destroy()
+            except Exception:
+                pass
+            import sys
+            sys.exit(0)
+        self.root.protocol("WM_DELETE_WINDOW", _on_close)
+        
         # Iniciar verificação de atualização em background
         self.root.after(2000, self.check_updates_async)
+
         
         # Toast de boas-vindas
         self.root.after(500, lambda: ToastNotification(self.root, f"Stems Organizer PRO v{CURRENT_VERSION}", "info", duration=2500))

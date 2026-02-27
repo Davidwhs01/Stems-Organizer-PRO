@@ -611,32 +611,44 @@ def show_review_screen(app, ai_results):
             name_entry.pack(side="left", padx=(10, 5), pady=6, fill="x", expand=True)
 
             def apply_rename(event=None, entry=name_entry, old_nome=nome):
-                novo = entry.get().strip()
+                try:
+                    novo = entry.get().strip()
+                except Exception:
+                    return  # Widget foi destruído durante rebuild do painel
                 if not novo or novo == old_nome:
                     return
                 if novo in review_state['files']:
-                    entry.delete(0, "end")
-                    entry.insert(0, old_nome)
+                    try:
+                        entry.delete(0, "end")
+                        entry.insert(0, old_nome)
+                    except Exception:
+                        pass
                     return
                 # Migrar dados no state
-                review_state['files'][novo] = review_state['files'].pop(old_nome)
-                review_state['files'][novo]['foi_alterado'] = True
-                # Atualizar undo stack se tiver entradas do nome antigo
-                for u in review_state['undo_stack']:
-                    if u.get('nome') == old_nome:
-                        u['nome'] = novo
+                if old_nome in review_state['files']:
+                    review_state['files'][novo] = review_state['files'].pop(old_nome)
+                    review_state['files'][novo]['foi_alterado'] = True
+                    for u in review_state['undo_stack']:
+                        if u.get('nome') == old_nome:
+                            u['nome'] = novo
+
+            # Highlight ao focar (sem FocusOut duplicado)
+            def _on_focus_in(e, w=name_entry):
+                try:
+                    w.configure(border_color=COLOR_ACCENT_CYAN, border_width=1)
+                except Exception:
+                    pass
+            def _on_focus_out(e, w=name_entry, fn=apply_rename):
+                try:
+                    w.configure(border_color="transparent", border_width=0)
+                except Exception:
+                    pass
+                fn(e)
 
             name_entry.bind("<Return>", apply_rename)
-            name_entry.bind("<FocusOut>", apply_rename)
-
-            # Highlight ao focar
-            def _on_focus_in(e, w=name_entry):
-                w.configure(border_color=COLOR_ACCENT_CYAN, border_width=1)
-            def _on_focus_out(e, w=name_entry):
-                w.configure(border_color="transparent", border_width=0)
-                apply_rename(e)
             name_entry.bind("<FocusIn>", _on_focus_in)
             name_entry.bind("<FocusOut>", _on_focus_out)
+
 
             # ComboBox para mover
             combo = ctk.CTkComboBox(
