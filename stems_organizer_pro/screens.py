@@ -593,7 +593,7 @@ def show_review_screen(app, ai_results):
             combo.set(cat_name)
 
             def handle_custom_input(event, n=nome, c=combo):
-                val = c.get().strip().upper() if c.get() else ""
+                val = c.get().strip() if c.get() else ""
                 if val and val != review_state['files'][n]['categoria']:
                     on_category_change(n, val)
                     

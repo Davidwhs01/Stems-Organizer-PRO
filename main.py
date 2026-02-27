@@ -1139,8 +1139,11 @@ class App:
                         )
                         
                         # Registrar para undo
-                        categoria_path = os.path.join(self.folder_path_full, action['category'])
-                        destino = os.path.join(categoria_path, action['target_name'])
+                        if action['category'] == "BEAT FECHADO":
+                            destino = os.path.join(self.folder_path_full, action['target_name'])
+                        else:
+                            categoria_path = os.path.join(self.folder_path_full, action['category'])
+                            destino = os.path.join(categoria_path, action['target_name'])
                         undo_batch.append({
                             'type': 'move',
                             'source': action['source_path'],

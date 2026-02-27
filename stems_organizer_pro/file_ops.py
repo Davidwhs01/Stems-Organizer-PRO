@@ -24,10 +24,13 @@ class FileOperations:
 
     @staticmethod
     def move_file(source_path, target_name, category, root_folder):
-        """Move arquivo para a categoria em estrutura flat: <root>/<Category>/"""
+        """Move arquivo para a categoria em estrutura flat: <root>/<Category>/, ou raiz se for BEAT FECHADO"""
         try:
-            cat_path = os.path.join(root_folder, category)
-            os.makedirs(cat_path, exist_ok=True)
+            if category == "BEAT FECHADO":
+                cat_path = root_folder
+            else:
+                cat_path = os.path.join(root_folder, category)
+                os.makedirs(cat_path, exist_ok=True)
             
             dest = os.path.join(cat_path, target_name)
             
