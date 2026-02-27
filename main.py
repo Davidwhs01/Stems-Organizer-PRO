@@ -914,8 +914,12 @@ class App:
                 categoria_encontrada = self.classifier.classify_locally(nome_final)
                 if categoria_encontrada:
                     # COLECIONAR no plano, não mover agora!
-                    categoria_path = os.path.join(pasta_raiz, categoria_encontrada)
-                    destino = os.path.join(categoria_path, nome_final)
+                    if categoria_encontrada == "BEAT FECHADO":
+                        destino = os.path.join(pasta_raiz, nome_final)
+                    else:
+                        categoria_path = os.path.join(pasta_raiz, categoria_encontrada)
+                        destino = os.path.join(categoria_path, nome_final)
+                        
                     action = FileOperations.create_action(
                         'move', caminho, destino=destino,
                         category=categoria_encontrada, source_name=nome_original, target_name=nome_final
@@ -1058,8 +1062,12 @@ class App:
             if categoria == "[Descartar]":
                 self.planned_actions.append(FileOperations.create_action('delete', caminho_original))
             else:
-                categoria_path = os.path.join(pasta_raiz, categoria)
-                destino = os.path.join(categoria_path, nome)
+                if categoria == "BEAT FECHADO":
+                    destino = os.path.join(pasta_raiz, nome)
+                else:
+                    categoria_path = os.path.join(pasta_raiz, categoria)
+                    destino = os.path.join(categoria_path, nome)
+                    
                 action = FileOperations.create_action(
                     'move', caminho_original, destino=destino,
                     category=categoria, source_name=nome, target_name=nome

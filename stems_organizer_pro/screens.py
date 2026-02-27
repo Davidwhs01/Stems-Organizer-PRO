@@ -592,11 +592,26 @@ def show_review_screen(app, ai_results):
             combo.pack(side="right", padx=6, pady=4)
             combo.set(cat_name)
 
+            def handle_custom_input(event, n=nome, c=combo):
+                val = c.get().strip().upper() if c.get() else ""
+                if val and val != review_state['files'][n]['categoria']:
+                    on_category_change(n, val)
+                    
+            combo._entry.bind("<Return>", handle_custom_input)
+            combo._entry.bind("<FocusOut>", handle_custom_input)
+
     def on_category_change(nome, nova_cat):
         """Quando o usuário muda a categoria de um arquivo"""
         antiga_cat = review_state['files'][nome]['categoria']
         if antiga_cat == nova_cat:
             return
+
+        if nova_cat not in review_state['counts']:
+            review_state['counts'][nova_cat] = 0
+            if nova_cat not in all_categories:
+                # Adiciona antes das categorias extras (Outros, Descartar)
+                pos = len(all_categories) - 2 if len(all_categories) >= 2 else len(all_categories)
+                all_categories.insert(pos, nova_cat)
 
         # Salvar no undo stack
         review_state['undo_stack'].append({'nome': nome, 'de': antiga_cat, 'para': nova_cat})
@@ -649,6 +664,8 @@ def show_review_screen(app, ai_results):
         review_state['tab_buttons'] = {}
 
         for cat in all_categories:
+            if cat == "[Descartar]": continue
+            
             count = review_state['counts'].get(cat, 0)
             if count == 0:
                 continue
@@ -679,6 +696,37 @@ def show_review_screen(app, ai_results):
             count_badge.place(relx=1.0, rely=0.5, anchor="e", x=-8)
 
             review_state['tab_buttons'][cat] = btn
+
+        # Renderizar [Descartar] separadamente, com cor vermelha
+        descartados_count = review_state['counts'].get("[Descartar]", 0)
+        if descartados_count > 0:
+            sep = ctk.CTkFrame(tabs_scroll, fg_color=COLOR_BORDER, height=1)
+            sep.pack(fill="x", padx=10, pady=5)
+
+            is_selected = ("[Descartar]" == review_state['selected_cat'])
+
+            btn = ctk.CTkButton(
+                tabs_scroll,
+                text="  DESCARTADOS",
+                font=FONT_BODY,
+                height=34,
+                anchor="w",
+                corner_radius=6,
+                fg_color=COLOR_ERROR if is_selected else "transparent",
+                text_color="white" if is_selected else COLOR_ERROR,
+                hover_color="#c62828" if is_selected else COLOR_SURFACE,
+                command=lambda: select_category("[Descartar]")
+            )
+            btn.pack(fill="x", padx=4, pady=1)
+
+            count_badge = ctk.CTkLabel(
+                btn, text=str(descartados_count),
+                font=FONT_CAPTION,
+                text_color="white" if is_selected else COLOR_ERROR,
+                width=30
+            )
+            count_badge.place(relx=1.0, rely=0.5, anchor="e", x=-8)
+            review_state['tab_buttons']["[Descartar]"] = btn
 
     # ============= CONTROLES DO FOOTER =============
     # Esconder Aplicar (redundante com Confirmar) e rewire Desfazer
