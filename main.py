@@ -1171,8 +1171,8 @@ class App:
                         self.execution_feedback.update_activity(f"Descartando: {filename}")
                         self.update_status(f"Descartando [{i+1}/{len(self.planned_actions)}]: {filename}", progress)
                         
-                        # Mover para lixeira (criar pasta Discarded)
-                        discarded_folder = os.path.join(self.folder_path_full, "Discarded")
+                        # Mover para lixeira (criar pasta DESCARTADOS)
+                        discarded_folder = os.path.join(self.folder_path_full, "DESCARTADOS")
                         os.makedirs(discarded_folder, exist_ok=True)
                         target_path = os.path.join(discarded_folder, filename)
                         shutil.move(action['source_path'], target_path)
@@ -1231,7 +1231,7 @@ class App:
             # Salvar no histórico de sessões
             duration = time.time() - self.processing_start_time if self.processing_start_time else 0
             categories_used = list(set(a.get('category', '') for a in self.planned_actions if a.get('category')))
-            SessionHistory.add(self.folder_path_full, success_count, categories_used, duration)
+            SessionHistory.add(self.folder_path_full, success_count, categories_used, duration, undo_batch)
 
             # Finalizar
             final_message = f"Aplicação concluída!\n{success_count} sucessos"

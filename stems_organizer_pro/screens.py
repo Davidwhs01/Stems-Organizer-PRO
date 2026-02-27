@@ -491,6 +491,21 @@ def show_review_screen(app, ai_results):
     )
     confirm_btn.pack(side="right", pady=8)
 
+    def cancel_review():
+        app.planned_actions.clear()
+        app.set_ui_state("idle")
+        from stems_organizer_pro.notifications import ToastNotification
+        ToastNotification(app.root, "Análise cancelada.", "info")
+
+    cancelar_btn = ctk.CTkButton(
+        header_inner, text="Cancelar",
+        font=FONT_BUTTON, height=32, width=110,
+        fg_color=COLOR_ERROR, hover_color="#c62828",
+        text_color="white", corner_radius=8,
+        command=cancel_review
+    )
+    cancelar_btn.pack(side="right", padx=(0, 15), pady=8)
+
     # ============= SIDEBAR DE CATEGORIAS (ESQUERDA) =============
     sidebar = ctk.CTkFrame(review_frame, fg_color=COLOR_FRAME, corner_radius=10, width=220)
     sidebar.grid(row=1, column=0, sticky="nsew", padx=(0, 8))
@@ -561,7 +576,7 @@ def show_review_screen(app, ai_results):
         if cat_name == "[Descartar]":
             info_label = ctk.CTkLabel(
                 files_scroll,
-                text="⚠️ Arquivos identificados como silenciosos ou marcados manualmente para descarte.\nEles serão movidos para uma pasta 'Discarded' e lixeira.",
+                text="⚠️ Arquivos identificados como silenciosos ou marcados manualmente para descarte.\nEles serão movidos para a pasta 'DESCARTADOS'.",
                 font=FONT_CAPTION,
                 text_color=COLOR_WARNING,
                 justify="left"
@@ -741,18 +756,11 @@ def show_review_screen(app, ai_results):
         review_state['tab_buttons']["[Descartar]"] = btn
 
     # ============= CONTROLES DO FOOTER =============
-    # Esconder Aplicar (redundante com Confirmar) e rewire Desfazer
+    # Esconder Aplicar e Desfazer global (redundantes)
     app.apply_button.grid_remove()
-    
-    # Salvar referência original do undo e rewire
-    original_undo_command = app.undo_button.cget('command')
-    app.undo_button.configure(command=undo_review_change)
-    app.undo_button.grid(row=0, column=4, padx=(5, 0))
+    app.undo_button.grid_remove()
 
     def on_confirm():
-        # Restaurar botões originais
-        app.undo_button.configure(command=original_undo_command)
-        app.undo_button.grid_remove()
         app.processar_resultados_revisados(review_state['files'])
 
     # Rewire o botão Confirmar do header
@@ -1087,14 +1095,49 @@ def show_history_screen(app):
         stats_text = f"📁 {session.get('files', 0)} arquivos  •  🏷️ {session.get('categories', 0)} categorias  •  ⏱️ {session.get('duration', 0)}s"
         ctk.CTkLabel(inner, text=stats_text, font=("", 11), text_color=COLOR_TEXT_DIM).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
-        # Botão reabrir
+        # Botões de ação (lado direito)
+        actions_frame = ctk.CTkFrame(inner, fg_color="transparent")
+        actions_frame.grid(row=0, column=2, rowspan=2, padx=(10, 0), sticky="e")
+
         folder_path = session.get('folder', '')
         if os.path.isdir(folder_path):
-            reopen_btn = ctk.CTkButton(
-                inner, text="📂 Reabrir", width=80, height=28, font=("", 11),
+            ctk.CTkButton(
+                actions_frame, text="📂 Reabrir", width=90, height=28, font=("", 11),
                 fg_color=COLOR_SURFACE, hover_color=COLOR_ACCENT_PURPLE,
                 command=lambda p=folder_path: app._reopen_folder(p)
-            )
-            reopen_btn.grid(row=0, column=2, rowspan=2, padx=(10, 0))
+            ).pack(side="left", padx=(0, 6))
+
+        undo_batch = session.get('undo_batch', [])
+        if undo_batch:
+            def _undo_session(batch=undo_batch, s=session):
+                from tkinter import messagebox
+                import shutil
+                if not messagebox.askyesno(
+                    "Desfazer Sessão",
+                    f"Deseja desfazer a organização da sessão de {s.get('date','?')}?\n{len(batch)} arquivos serão movidos de volta."
+                ):
+                    return
+                ok = 0
+                err = 0
+                for action in reversed(batch):
+                    try:
+                        if action['type'] == 'move':
+                            if os.path.exists(action['destination']):
+                                os.makedirs(os.path.dirname(action['source']), exist_ok=True)
+                                shutil.move(action['destination'], action['source'])
+                                ok += 1
+                        elif action['type'] == 'rename':
+                            if os.path.exists(action['new_path']):
+                                os.rename(action['new_path'], action['old_path'])
+                                ok += 1
+                    except Exception as e:
+                        err += 1
+                messagebox.showinfo("Desfazer Concluído", f"✅ {ok} arquivos restaurados\n❌ {err} erros")
+
+            ctk.CTkButton(
+                actions_frame, text="↩ Desfazer", width=90, height=28, font=("", 11),
+                fg_color=COLOR_ERROR, hover_color="#c62828", text_color="white",
+                command=_undo_session
+            ).pack(side="left")
 
 

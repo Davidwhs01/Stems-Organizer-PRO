@@ -31,13 +31,14 @@ class SessionHistory:
             pass
 
     @staticmethod
-    def add(folder_path, file_count, categories_found, duration_seconds):
+    def add(folder_path, file_count, categories_found, duration_seconds, undo_batch=None):
         sessions = SessionHistory.load()
         sessions.append({
             'date': time.strftime('%Y-%m-%d %H:%M'),
             'folder': folder_path,
             'files': file_count,
             'categories': categories_found,
-            'duration': round(duration_seconds, 1)
+            'duration': round(duration_seconds, 1),
+            'undo_batch': undo_batch or []
         })
         SessionHistory.save(sessions)
