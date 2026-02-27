@@ -189,7 +189,7 @@ Categorias válidas: {valid_categories_list}
         self.ia_cache[self.get_cache_key(filename)] = category
 
     def should_discard(self, filename):
-        discard_patterns = ["('_0)", "master.wav", ".tmp", "_backup", "_old"]
+        discard_patterns = ["('_0)", ".tmp", "_backup", "_old"]
         return any(p in filename.lower() for p in discard_patterns)
 
     def classify_locally(self, filename):
@@ -242,10 +242,6 @@ Categorias válidas: {valid_categories_list}
         if not self.ffmpeg_available:
             return False
             
-        file_lower = os.path.basename(filepath).lower()
-        if "verb" in file_lower or "reverb" in file_lower:
-            return False
-            
         try:
             # Configurar flag para ocultar terminal do FFmpeg no Windows
             creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
@@ -268,10 +264,10 @@ Categorias válidas: {valid_categories_list}
                         continue
             
             if max_volume is None: return False
-            if max_volume == float('-inf') or max_volume <= -70:
+            if max_volume == float('-inf') or max_volume <= -60:
                 logger.info(f"🔇 Silêncio detectado ({max_volume} dB): {os.path.basename(filepath)}")
                 return True
-            if deep_check and max_volume <= -60:
+            if deep_check and max_volume <= -50:
                 logger.info(f"🔇 Silêncio profundo ({max_volume} dB): {os.path.basename(filepath)}")
                 return True
             return False
