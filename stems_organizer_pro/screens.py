@@ -620,6 +620,9 @@ def show_review_screen(app, ai_results):
                 if not novo or not novo.strip() or novo.strip() == old_nome:
                     return
                 novo = novo.strip()
+                # Auto-completar com .wav se o usuário não digitou extensão
+                if '.' not in novo:
+                    novo = novo + ".wav"
                 if novo in review_state['files']:
                     return
                 if old_nome in review_state['files']:
