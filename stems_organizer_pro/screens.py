@@ -600,12 +600,43 @@ def show_review_screen(app, ai_results):
             row = ctk.CTkFrame(files_scroll, fg_color=COLOR_BACKGROUND, corner_radius=6)
             row.pack(fill="x", padx=6, pady=1)
 
-            # Nome do arquivo (truncado)
-            disp_name = nome if len(nome) <= 45 else nome[:42] + "..."
-            ctk.CTkLabel(
-                row, text=disp_name,
-                font=FONT_CAPTION, text_color=COLOR_TEXT, anchor="w"
-            ).pack(side="left", padx=(10, 5), pady=6, fill="x", expand=True)
+            # Campo editável para renomear o arquivo
+            name_entry = ctk.CTkEntry(
+                row, width=220, height=26,
+                font=FONT_CAPTION,
+                fg_color="transparent", border_color="transparent",
+                text_color=COLOR_TEXT
+            )
+            name_entry.insert(0, nome)
+            name_entry.pack(side="left", padx=(10, 5), pady=6, fill="x", expand=True)
+
+            def apply_rename(event=None, entry=name_entry, old_nome=nome):
+                novo = entry.get().strip()
+                if not novo or novo == old_nome:
+                    return
+                if novo in review_state['files']:
+                    entry.delete(0, "end")
+                    entry.insert(0, old_nome)
+                    return
+                # Migrar dados no state
+                review_state['files'][novo] = review_state['files'].pop(old_nome)
+                review_state['files'][novo]['foi_alterado'] = True
+                # Atualizar undo stack se tiver entradas do nome antigo
+                for u in review_state['undo_stack']:
+                    if u.get('nome') == old_nome:
+                        u['nome'] = novo
+
+            name_entry.bind("<Return>", apply_rename)
+            name_entry.bind("<FocusOut>", apply_rename)
+
+            # Highlight ao focar
+            def _on_focus_in(e, w=name_entry):
+                w.configure(border_color=COLOR_ACCENT_CYAN, border_width=1)
+            def _on_focus_out(e, w=name_entry):
+                w.configure(border_color="transparent", border_width=0)
+                apply_rename(e)
+            name_entry.bind("<FocusIn>", _on_focus_in)
+            name_entry.bind("<FocusOut>", _on_focus_out)
 
             # ComboBox para mover
             combo = ctk.CTkComboBox(
@@ -621,11 +652,12 @@ def show_review_screen(app, ai_results):
 
             def handle_custom_input(event, n=nome, c=combo):
                 val = c.get().strip() if c.get() else ""
-                if val and val != review_state['files'][n]['categoria']:
+                if val and val != review_state['files'].get(n, {}).get('categoria', ''):
                     on_category_change(n, val)
                     
             combo._entry.bind("<Return>", handle_custom_input)
             combo._entry.bind("<FocusOut>", handle_custom_input)
+
 
     def on_category_change(nome, nova_cat):
         """Quando o usuário muda a categoria de um arquivo"""
