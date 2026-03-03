@@ -135,6 +135,7 @@ class App:
                 self.api_key = key
                 self.classifier.api_key = key
                 self.api_configured = True
+            self.root.after(200, self.load_user_preferences)
             self.root.after(100, lambda: self.navigate_to('organize'))
 
         self.load_api_key()
@@ -657,6 +658,9 @@ class App:
         self.cancel_requested = False  # Reset cancel flag
         self.planned_actions = []
         self.set_ui_state("processing")
+
+        # Salvar preferências na nuvem (modo de análise e reorganizar pastas)
+        threading.Thread(target=self.save_user_preferences, daemon=True).start()
         
         # Inicializar ETA
         self.processing_start_time = time.time()
@@ -1238,6 +1242,18 @@ class App:
             categories_used = list(set(a.get('category', '') for a in self.planned_actions if a.get('category')))
             SessionHistory.add(self.folder_path_full, success_count, categories_used, duration, undo_batch)
 
+            # Enviar estatísticas de uso para o Supabase
+            silent_count = sum(1 for a in self.planned_actions if a['action'] == 'delete')
+            ai_calls = getattr(self.classifier, '_ai_call_count', 0)
+            self.submit_usage_stats(
+                files_processed=len(self.planned_actions),
+                files_organized=success_count,
+                files_discarded=sum(1 for a in self.planned_actions if a['action'] == 'delete'),
+                files_silent=silent_count,
+                ai_calls=ai_calls,
+                processing_time=duration
+            )
+
             # Finalizar
             final_message = f"Aplicação concluída!\n{success_count} sucessos"
             if error_count > 0:
@@ -1371,6 +1387,58 @@ class App:
 
         except Exception as e:
             print(f"DEBUG: Erro ao submeter sugestão: {e}")
+
+    def submit_usage_stats(self, files_processed=0, files_organized=0, files_discarded=0, files_silent=0, ai_calls=0, processing_time=0):
+        """Envia estatísticas de uso para o Supabase"""
+        if not self.supabase or not self.auth or not self.auth.user:
+            return
+        try:
+            self.supabase.table('usage_statistics').insert({
+                'user_id': self.auth.user.id,
+                'files_processed': files_processed,
+                'files_organized': files_organized,
+                'files_discarded': files_discarded,
+                'files_silent': files_silent,
+                'ai_calls': ai_calls,
+                'processing_time_seconds': round(processing_time, 2),
+                'app_version': CURRENT_VERSION
+            }).execute()
+            logger.info(f"Usage stats submitted: {files_processed} files processed")
+        except Exception as e:
+            logger.debug(f"Erro ao enviar usage stats: {e}")
+
+    def load_user_preferences(self):
+        """Carrega preferências do usuário do Supabase"""
+        if not self.supabase or not self.auth or not self.auth.user:
+            return
+        try:
+            resp = self.supabase.table('user_preferences').select('*').eq('id', self.auth.user.id).execute()
+            if resp.data:
+                prefs = resp.data[0]
+                # Aplicar preferência de modo de análise
+                if hasattr(self, 'analysis_mode_combo') and prefs.get('analysis_mode'):
+                    self.analysis_mode_combo.set(prefs['analysis_mode'])
+                # Aplicar preferência de reorganizar pastas
+                if hasattr(self, 'reorganize_folders_var') and prefs.get('reorganize_folders') is not None:
+                    self.reorganize_folders_var.set(prefs['reorganize_folders'])
+                logger.info("User preferences loaded from cloud")
+        except Exception as e:
+            logger.debug(f"Erro ao carregar preferências: {e}")
+
+    def save_user_preferences(self):
+        """Salva preferências atuais do usuário no Supabase"""
+        if not self.supabase or not self.auth or not self.auth.user:
+            return
+        try:
+            prefs = {
+                'id': self.auth.user.id,
+                'analysis_mode': self.analysis_mode_combo.get() if hasattr(self, 'analysis_mode_combo') else None,
+                'reorganize_folders': self.reorganize_folders_var.get() if hasattr(self, 'reorganize_folders_var') else False,
+            }
+            self.supabase.table('user_preferences').upsert(prefs).execute()
+            logger.info("User preferences saved to cloud")
+        except Exception as e:
+            logger.debug(f"Erro ao salvar preferências: {e}")
 
 # Função principal
 
