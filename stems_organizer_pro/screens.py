@@ -134,7 +134,11 @@ def show_login_screen(app):
         btn_google.configure(state="disabled")
         btn_login.configure(state="disabled")
         app.root.update()
-        app.auth.login_with_google(on_google_auth_done)
+        started, msg = app.auth.login_with_google(on_google_auth_done)
+        if not started:
+            err_login.configure(text=f"❌ Erro: {msg}", text_color=COLOR_ERROR)
+            btn_google.configure(state="normal")
+            btn_login.configure(state="normal")
 
     # Google Button
     btn_google = ctk.CTkButton(
@@ -243,9 +247,13 @@ def show_welcome_screen(app):
         ctk.CTkLabel(card, text=title, font=FONT_BODY_BOLD, text_color=COLOR_TEXT).pack(pady=(0, 3))
         ctk.CTkLabel(card, text=desc, font=FONT_CAPTION_DIM, text_color=COLOR_TEXT_DIM, wraplength=150).pack()
 
-        # Fade-in escalonado
+        # Fade-in escalonado seguro
         card.grid_remove()
-        app.root.after(400 + i * 200, lambda c=card: c.grid())
+        def _safe_grid(c=card):
+            try:
+                if c.winfo_exists(): c.grid()
+            except Exception: pass
+        app.root.after(400 + i * 200, _safe_grid)
 
     # Instrução de ação
     action_frame = ctk.CTkFrame(welcome_frame, fg_color="transparent")
@@ -631,11 +639,8 @@ def show_review_screen(app, ai_results):
                     for u in review_state['undo_stack']:
                         if u.get('nome') == old_nome:
                             u['nome'] = novo
-                    disp = novo if len(novo) <= 50 else novo[:47] + "..."
-                    try:
-                        lbl.configure(text=disp)
-                    except Exception:
-                        pass
+                    # Rebuild para que a próxima renomeação capture o nome atualizado
+                    select_category(review_state['selected_cat'])
 
             name_label.bind("<Double-Button-1>", _rename_click)
 
@@ -755,6 +760,45 @@ def show_review_screen(app, ai_results):
                 width=30
             )
             count_badge.place(relx=1.0, rely=0.5, anchor="e", x=-8)
+
+            # Double-click para renomear a categoria/pasta
+            def _rename_category(event=None, old_cat=cat):
+                if old_cat in ("[Descartar]", "Outros", "BEAT FECHADO"):
+                    return
+                dialog = ctk.CTkInputDialog(
+                    text=f"Novo nome para a pasta:\n{old_cat}",
+                    title="Renomear categoria"
+                )
+                novo_cat = dialog.get_input()
+                if not novo_cat or not novo_cat.strip() or novo_cat.strip() == old_cat:
+                    return
+                novo_cat = novo_cat.strip()
+                if novo_cat in review_state['counts'] and novo_cat != old_cat:
+                    # Mesclar na categoria existente
+                    pass
+                # Atualizar todos os arquivos dessa categoria
+                for nome, dados in review_state['files'].items():
+                    if dados['categoria'] == old_cat:
+                        dados['categoria'] = novo_cat
+                        dados['foi_alterado'] = True
+                # Atualizar contagens
+                old_count = review_state['counts'].pop(old_cat, 0)
+                review_state['counts'][novo_cat] = review_state['counts'].get(novo_cat, 0) + old_count
+                # Atualizar lista de categorias
+                if old_cat in all_categories:
+                    idx = all_categories.index(old_cat)
+                    all_categories[idx] = novo_cat
+                elif novo_cat not in all_categories:
+                    all_categories.append(novo_cat)
+                # Atualizar seleção
+                if review_state['selected_cat'] == old_cat:
+                    review_state['selected_cat'] = novo_cat
+                ToastNotification(app.root, f"Pasta renomeada: {old_cat} → {novo_cat}", "info", duration=2000)
+                rebuild_tabs()
+                select_category(novo_cat)
+
+            btn.bind("<Double-Button-1>", _rename_category)
+            count_badge.bind("<Double-Button-1>", _rename_category)
 
             review_state['tab_buttons'][cat] = btn
 
