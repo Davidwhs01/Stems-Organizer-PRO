@@ -12,6 +12,15 @@ import subprocess
 import urllib.request
 import logging
 import webbrowser
+import ssl
+
+# Fix SSL para PyInstaller: garantir que certificados são encontrados
+if getattr(sys, 'frozen', False):
+    try:
+        import certifi
+        os.environ['SSL_CERT_FILE'] = certifi.where()
+    except ImportError:
+        pass
 from tkinter import messagebox
 
 import customtkinter as ctk
@@ -65,14 +74,27 @@ class AutoUpdater:
             url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
             request = urllib.request.Request(url)
             request.add_header('User-Agent', f'StemsOrganizerPro/{CURRENT_VERSION}')
-            with urllib.request.urlopen(request, timeout=5) as response:
+            
+            # Criar contexto SSL que funciona mesmo em PyInstaller
+            ctx = ssl.create_default_context()
+            try:
+                import certifi
+                ctx.load_verify_locations(certifi.where())
+            except Exception:
+                pass  # fallback para certs do sistema
+            
+            with urllib.request.urlopen(request, timeout=10, context=ctx) as response:
                 data = json.loads(response.read().decode('utf-8'))
                 latest_version = data.get('tag_name', '').replace('v', '')
+                logger.info(f"Auto-update check: current={CURRENT_VERSION}, latest={latest_version}")
                 if latest_version:
                     latest_tuple = AutoUpdater.parse_version(latest_version)
                     current_tuple = AutoUpdater.parse_version(CURRENT_VERSION)
                     if latest_tuple > current_tuple:
+                        logger.info(f"Atualização disponível: {latest_version}")
                         return data
+                    else:
+                        logger.info("Já está na versão mais recente.")
         except Exception as e:
             logger.error(f"Erro ao checar atualizações: {e}")
         return None
